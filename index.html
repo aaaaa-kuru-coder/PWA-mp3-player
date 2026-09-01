@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#111827" />
+  <meta name="color-scheme" content="dark light" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none';" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="./icons/icon-192.png" />
+  <link rel="stylesheet" href="./style.css" />
+  <title>Local MP3 Player</title>
+</head>
+<body>
+  <main class="app">
+    <header>
+      <div>
+        <p class="eyebrow">LOCAL-ONLY PLAYER</p>
+        <h1>MP3 Player</h1>
+      </div>
+      <span class="privacy-badge">外部アップロードなし</span>
+    </header>
+
+    <section class="card file-card">
+      <label class="file-button" for="fileInput">MP3を選ぶ</label>
+      <input id="fileInput" type="file" accept="audio/mpeg,audio/mp3,.mp3" />
+      <div class="track-info">
+        <div id="trackName" class="track-name">ファイル未選択</div>
+        <div id="trackMeta" class="track-meta">端末内のMP3を選択してください</div>
+      </div>
+    </section>
+
+    <section class="card player-card">
+      <audio id="audio" preload="metadata"></audio>
+
+      <div class="time-row">
+        <span id="currentTime">0:00</span>
+        <input id="seek" class="seek" type="range" min="0" max="1000" value="0" step="1" aria-label="再生位置" />
+        <span id="duration">0:00</span>
+      </div>
+
+      <div class="transport">
+        <button id="back10" class="secondary" type="button" aria-label="10秒戻る">−10s</button>
+        <button id="playPause" class="play" type="button" disabled>▶</button>
+        <button id="forward10" class="secondary" type="button" aria-label="10秒進む">+10s</button>
+      </div>
+
+      <div class="setting-row">
+        <div>
+          <div class="setting-title">ループ</div>
+          <div class="setting-note">同じファイルを繰り返します</div>
+        </div>
+        <label class="switch">
+          <input id="loopToggle" type="checkbox" />
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="gain-block">
+        <div class="gain-head">
+          <div>
+            <div class="setting-title">プレイヤー音量補正</div>
+            <div class="setting-note">スマホ本体音量とは別の倍率</div>
+          </div>
+          <output id="gainValue">1.00×</output>
+        </div>
+        <input id="gain" class="gain" type="range" min="0" max="1000" value="730" step="1" aria-label="音量倍率" />
+        <div class="gain-scale"><span>1/3×</span><span>1.0×</span><span>1.5×</span></div>
+        <div id="gainDb" class="gain-db">0.00 dB</div>
+      </div>
+    </section>
+
+    <section class="card note-card">
+      <strong>プライバシー設計</strong>
+      <p>選んだMP3はブラウザ内の <code>blob:</code> URLとして再生します。このアプリ自身にはアップロード処理・解析送信・外部CDN・広告・アクセス解析を入れていません。</p>
+      <p class="small">曲ごとの音量倍率とループ設定だけ、ファイル名・サイズ・更新日時をキーに端末の localStorage へ保存します。MP3音声データ自体は保存しません。</p>
+    </section>
+  </main>
+
+  <script src="./app.js"></script>
+</body>
+</html>
