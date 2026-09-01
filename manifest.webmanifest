@@ -1,7 +1,7 @@
 {
-  "name": "Local MP3 Player v2",
+  "name": "Local MP3 Player v3",
   "short_name": "MP3 Player",
-  "description": "端末内の音楽フォルダを登録し、MP3を外部アップロードせず再生するPWAプレイヤー",
+  "description": "端末内の音楽フォルダを登録し、フォルダ・アーティスト・アルバム別に閲覧できるローカルPWAプレイヤー",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

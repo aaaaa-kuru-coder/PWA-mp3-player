@@ -22,6 +22,11 @@
     </header>
 
     <section class="card library-card">
+      <div id="loadingOverlay" class="loading-overlay hidden" aria-live="polite" aria-busy="true">
+        <div class="spinner" aria-hidden="true"></div>
+        <div id="loadingText" class="loading-text">音楽ライブラリを読み込み中…</div>
+      </div>
+
       <div class="library-head">
         <div>
           <div class="setting-title">音楽ライブラリ</div>
@@ -38,11 +43,20 @@
         <span>登録フォルダへのアクセス許可が必要です。</span>
         <button id="grantFolderPermission" type="button">アクセスを許可</button>
       </div>
-      <div id="directoryUnsupported" class="warning hidden">このブラウザではフォルダ登録APIを利用できません。下の「MP3を選択」から複数曲を選べます。</div>
+      <div id="directoryUnsupported" class="warning hidden">このブラウザではフォルダ登録APIを利用できません。「MP3を選択」から複数曲を選べます。</div>
+
+      <div class="view-tabs" role="tablist" aria-label="ライブラリ表示モード">
+        <button class="view-tab active" type="button" data-view="all">全曲</button>
+        <button class="view-tab" type="button" data-view="folder">フォルダ</button>
+        <button class="view-tab" type="button" data-view="artist">アーティスト</button>
+        <button class="view-tab" type="button" data-view="album">アルバム</button>
+      </div>
+
+      <div id="breadcrumb" class="breadcrumb hidden" aria-label="現在位置"></div>
 
       <div class="list-toolbar">
         <div id="trackCount" class="track-count">0曲</div>
-        <label class="sort-label">並び順
+        <label id="sortLabel" class="sort-label">並び順
           <select id="sortSelect">
             <option value="filename">ファイル名</option>
             <option value="title">曲名</option>
@@ -146,7 +160,7 @@
     <section class="card note-card">
       <strong>プライバシー設計</strong>
       <p>MP3は端末から直接 <code>File</code> として読み、<code>blob:</code> URLで再生します。アプリ自身にMP3アップロード処理・外部API・CDN・広告・アクセス解析はありません。</p>
-      <p class="small">登録フォルダのハンドルは IndexedDB、曲別の音量・ループ・コンプレッサー設定は localStorage に保存します。アルバム画像/曲名/アーティスト/アルバムはMP3内のID3タグを端末上で読み取ります。</p>
+      <p class="small">登録フォルダのハンドルは IndexedDB、曲別の音量・ループ・コンプレッサー設定は localStorage に保存します。ID3タグも端末上で解析します。</p>
     </section>
   </main>
 

@@ -9,9 +9,14 @@ const grantFolderPermission = $('grantFolderPermission');
 const folderStatus = $('folderStatus');
 const permissionBox = $('permissionBox');
 const directoryUnsupported = $('directoryUnsupported');
+const loadingOverlay = $('loadingOverlay');
+const loadingText = $('loadingText');
 const trackList = $('trackList');
 const trackCount = $('trackCount');
 const sortSelect = $('sortSelect');
+const sortLabel = $('sortLabel');
+const breadcrumb = $('breadcrumb');
+const viewTabs = Array.from(document.querySelectorAll('.view-tab'));
 const trackName = $('trackName');
 const trackArtist = $('trackArtist');
 const trackMeta = $('trackMeta');
@@ -49,6 +54,8 @@ const GAIN_MAX = 1.5;
 const DB_NAME = 'local-mp3-player-db-v2';
 const DB_STORE = 'handles';
 const DIRECTORY_KEY = 'music-directory';
+const SETTINGS_PREFIX = 'local-mp3-player:v3:';
+const LEGACY_PREFIX = 'local-mp3-player:v2:';
 
 let directoryHandle = null;
 let tracks = [];
@@ -61,7 +68,13 @@ let sourceNode = null;
 let gainNode = null;
 let compressorNode = null;
 let makeupNode = null;
+let viewMode = 'all';
+let viewPath = [];
 
+function setLoading(show, text = '音楽ライブラリを読み込み中…') {
+  loadingText.textContent = text;
+  loadingOverlay.classList.toggle('hidden', !show);
+}
 function sliderToGain(value) {
   const t = Number(value) / 1000;
   return GAIN_MIN * Math.pow(GAIN_MAX / GAIN_MIN, t);
@@ -82,9 +95,13 @@ function bytes(n) {
   while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
   return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
-function trackKey(file) { return `${file.name}|${file.size}|${file.lastModified}`; }
-function storageKey(key) { return `local-mp3-player:v2:${key}`; }
 function isMp3(file) { return /\.mp3$/i.test(file.name) || file.type === 'audio/mpeg'; }
+function baseTrackKey(file) { return `${file.name}|${file.size}|${file.lastModified}`; }
+function trackKey(file, path = '') { return `${path || file.name}|${file.size}|${file.lastModified}`; }
+function storageKey(key) { return `${SETTINGS_PREFIX}${key}`; }
+function legacyStorageKey(file) { return `${LEGACY_PREFIX}${baseTrackKey(file)}`; }
+function cmp(a, b) { return String(a || '').localeCompare(String(b || ''), 'ja', { numeric:true, sensitivity:'base' }); }
+function normalizeGroupName(value, fallback) { return (value || '').trim() || fallback; }
 
 function openDb() {
   return new Promise((resolve, reject) => {
@@ -165,8 +182,8 @@ async function readId3(file) {
         if (mimeEnd > i) {
           const mime = new TextDecoder('ascii').decode(body.slice(i, mimeEnd));
           i = mimeEnd + 1;
-          i += 1; // picture type
-          i = findTerminator(body, i, enc); // description
+          i += 1;
+          i = findTerminator(body, i, enc);
           if (i < body.length) result.artworkBlob = new Blob([body.slice(i)], { type: mime || 'image/jpeg' });
         }
       }
@@ -179,28 +196,36 @@ async function readId3(file) {
 async function makeTrack(file, path = '') {
   const tag = await readId3(file);
   return {
-    file, key: trackKey(file), path,
+    file,
+    key: trackKey(file, path),
+    legacyKey: baseTrackKey(file),
+    path,
     title: tag.title || file.name.replace(/\.mp3$/i, ''),
-    artist: tag.artist || '', album: tag.album || '', artworkBlob: tag.artworkBlob
+    artist: tag.artist || '',
+    album: tag.album || '',
+    artworkBlob: tag.artworkBlob
   };
 }
-async function mapLimit(items, limit, worker) {
-  const out = new Array(items.length); let cursor = 0;
+async function mapLimit(items, limit, worker, onProgress) {
+  const out = new Array(items.length); let cursor = 0; let done = 0;
   async function run() {
-    while (cursor < items.length) { const i = cursor++; out[i] = await worker(items[i], i); }
+    while (cursor < items.length) {
+      const i = cursor++;
+      out[i] = await worker(items[i], i);
+      done++;
+      if (onProgress) onProgress(done, items.length);
+    }
   }
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, run));
+  await Promise.all(Array.from({ length: Math.min(limit, Math.max(1, items.length)) }, run));
   return out;
 }
-async function collectFiles(handle, prefix = '') {
-  const found = [];
+async function collectFiles(handle, prefix = '', found = []) {
   for await (const [name, child] of handle.entries()) {
     if (child.kind === 'file') {
       const file = await child.getFile();
       if (isMp3(file)) found.push({ file, path: prefix + name });
     } else if (child.kind === 'directory') {
-      const nested = await collectFiles(child, `${prefix}${name}/`);
-      found.push(...nested);
+      await collectFiles(child, `${prefix}${name}/`, found);
     }
   }
   return found;
@@ -209,41 +234,193 @@ async function collectFiles(handle, prefix = '') {
 async function loadDirectory(handle) {
   folderStatus.textContent = `「${handle.name}」を読み込み中…`;
   refreshFolder.disabled = true;
+  permissionBox.classList.add('hidden');
+  setLoading(true, 'フォルダを探索中…');
   try {
     const files = await collectFiles(handle);
-    tracks = await mapLimit(files, 4, ({file,path}) => makeTrack(file, path));
+    if (!files.length) {
+      tracks = [];
+      folderStatus.textContent = `登録フォルダ: ${handle.name}`;
+      renderLibrary();
+      return;
+    }
+    tracks = await mapLimit(
+      files,
+      4,
+      ({file,path}) => makeTrack(file, path),
+      (done, total) => setLoading(true, `曲情報を読み込み中… ${done}/${total}`)
+    );
     folderStatus.textContent = `登録フォルダ: ${handle.name}`;
     refreshFolder.disabled = false;
-    permissionBox.classList.add('hidden');
-    renderTracks();
+    viewPath = [];
+    renderLibrary();
   } catch (err) {
     console.error(err);
     folderStatus.textContent = 'フォルダの読み込みに失敗しました';
+    if (err && err.name === 'NotAllowedError') permissionBox.classList.remove('hidden');
+  } finally {
+    refreshFolder.disabled = !directoryHandle;
+    setLoading(false);
   }
 }
 
-function sortTracks() {
+function sortTrackArray(list) {
   const field = sortSelect.value;
   const value = (t) => field === 'filename' ? t.file.name : (t[field] || '');
-  sortedTracks = [...tracks].sort((a,b) => value(a).localeCompare(value(b), 'ja', { numeric:true, sensitivity:'base' }) || a.file.name.localeCompare(b.file.name, 'ja', {numeric:true}));
+  return [...list].sort((a,b) => cmp(value(a), value(b)) || cmp(a.file.name, b.file.name));
 }
-function renderTracks() {
-  sortTracks();
-  trackCount.textContent = `${sortedTracks.length}曲`;
+function makeTrackRow(t) {
+  const row = document.createElement('button');
+  row.type = 'button';
+  row.className = 'track-row' + (currentTrack?.key === t.key ? ' active' : '');
+  const left = document.createElement('div');
+  const title = document.createElement('div'); title.className = 'track-row-title'; title.textContent = t.title;
+  const sub = document.createElement('div'); sub.className = 'track-row-sub';
+  sub.textContent = [t.artist, t.album, t.path && t.path !== t.file.name ? t.path : ''].filter(Boolean).join(' ・ ') || t.file.name;
+  const size = document.createElement('div'); size.className = 'track-row-size'; size.textContent = bytes(t.file.size);
+  left.append(title, sub); row.append(left, size);
+  row.addEventListener('click', () => selectTrack(t, true));
+  return row;
+}
+function makeFolderRow(name, subtitle, onClick) {
+  const row = document.createElement('button'); row.type = 'button'; row.className = 'folder-row';
+  const left = document.createElement('div');
+  const title = document.createElement('div'); title.className = 'folder-row-title'; title.textContent = name;
+  const sub = document.createElement('div'); sub.className = 'folder-row-sub'; sub.textContent = subtitle;
+  const arrow = document.createElement('div'); arrow.className = 'folder-row-arrow'; arrow.textContent = '›';
+  left.append(title, sub); row.append(left, arrow); row.addEventListener('click', onClick); return row;
+}
+function setBreadcrumb(parts) {
+  breadcrumb.replaceChildren();
+  if (!parts.length) { breadcrumb.classList.add('hidden'); return; }
+  breadcrumb.classList.remove('hidden');
+  parts.forEach((part, i) => {
+    const btn = document.createElement('button'); btn.type = 'button'; btn.className = 'crumb' + (i === parts.length - 1 ? ' current' : ''); btn.textContent = part.label;
+    if (i < parts.length - 1) btn.addEventListener('click', part.onClick);
+    breadcrumb.append(btn);
+    if (i < parts.length - 1) { const sep = document.createElement('span'); sep.className = 'crumb-sep'; sep.textContent = '›'; breadcrumb.append(sep); }
+  });
+}
+function renderTrackRows(list) {
+  const sorted = sortTrackArray(list);
+  sortedTracks = sorted;
+  for (const t of sorted) trackList.append(makeTrackRow(t));
+}
+function groupCountText(list) { return `${list.length}曲`; }
+
+function renderAllView() {
+  setBreadcrumb([]);
+  sortLabel.classList.remove('hidden');
+  renderTrackRows(tracks);
+}
+function renderFolderView() {
+  sortLabel.classList.add('hidden');
+  const pathPrefix = viewPath.length ? `${viewPath.join('/')}/` : '';
+  const immediateFolders = new Map();
+  const directTracks = [];
+  for (const t of tracks) {
+    if (!t.path.startsWith(pathPrefix)) continue;
+    const rest = t.path.slice(pathPrefix.length);
+    const parts = rest.split('/');
+    if (parts.length === 1) directTracks.push(t);
+    else {
+      const name = parts[0];
+      if (!immediateFolders.has(name)) immediateFolders.set(name, []);
+      immediateFolders.get(name).push(t);
+    }
+  }
+  const rootLabel = directoryHandle?.name || '選択ファイル';
+  const crumbs = [{ label:rootLabel, onClick:() => { viewPath = []; renderLibrary(); } }];
+  viewPath.forEach((seg, idx) => crumbs.push({ label:seg, onClick:() => { viewPath = viewPath.slice(0, idx + 1); renderLibrary(); } }));
+  setBreadcrumb(crumbs);
+  sortedTracks = sortTrackArray(directTracks);
+  for (const [name, list] of [...immediateFolders.entries()].sort((a,b) => cmp(a[0], b[0]))) {
+    trackList.append(makeFolderRow(name, groupCountText(list), () => { viewPath.push(name); renderLibrary(); }));
+  }
+  renderTrackRows(directTracks);
+}
+function renderArtistView() {
+  sortLabel.classList.add('hidden');
+  const artistName = viewPath[0] || null;
+  const albumName = viewPath[1] || null;
+  if (!artistName) {
+    setBreadcrumb([]);
+    const groups = new Map();
+    for (const t of tracks) {
+      const key = normalizeGroupName(t.artist, 'アーティスト未設定');
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(t);
+    }
+    sortedTracks = [];
+    for (const [name, list] of [...groups.entries()].sort((a,b) => cmp(a[0], b[0]))) {
+      trackList.append(makeFolderRow(name, groupCountText(list), () => { viewPath = [name]; renderLibrary(); }));
+    }
+    return;
+  }
+  const artistTracks = tracks.filter(t => normalizeGroupName(t.artist, 'アーティスト未設定') === artistName);
+  if (!albumName) {
+    setBreadcrumb([
+      { label:'アーティスト', onClick:() => { viewPath = []; renderLibrary(); } },
+      { label:artistName, onClick:() => {} }
+    ]);
+    const groups = new Map();
+    for (const t of artistTracks) {
+      const key = normalizeGroupName(t.album, 'アルバム未設定');
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(t);
+    }
+    sortedTracks = [];
+    for (const [name, list] of [...groups.entries()].sort((a,b) => cmp(a[0], b[0]))) {
+      trackList.append(makeFolderRow(name, groupCountText(list), () => { viewPath = [artistName, name]; renderLibrary(); }));
+    }
+    return;
+  }
+  setBreadcrumb([
+    { label:'アーティスト', onClick:() => { viewPath = []; renderLibrary(); } },
+    { label:artistName, onClick:() => { viewPath = [artistName]; renderLibrary(); } },
+    { label:albumName, onClick:() => {} }
+  ]);
+  const list = artistTracks.filter(t => normalizeGroupName(t.album, 'アルバム未設定') === albumName);
+  sortLabel.classList.remove('hidden');
+  renderTrackRows(list);
+}
+function renderAlbumView() {
+  sortLabel.classList.add('hidden');
+  const albumName = viewPath[0] || null;
+  if (!albumName) {
+    setBreadcrumb([]);
+    const groups = new Map();
+    for (const t of tracks) {
+      const key = normalizeGroupName(t.album, 'アルバム未設定');
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(t);
+    }
+    sortedTracks = [];
+    for (const [name, list] of [...groups.entries()].sort((a,b) => cmp(a[0], b[0]))) {
+      const artists = [...new Set(list.map(t => normalizeGroupName(t.artist, 'アーティスト未設定')))];
+      const sub = artists.length <= 2 ? `${artists.join(' / ')} ・ ${list.length}曲` : `${artists.length}アーティスト ・ ${list.length}曲`;
+      trackList.append(makeFolderRow(name, sub, () => { viewPath = [name]; renderLibrary(); }));
+    }
+    return;
+  }
+  setBreadcrumb([
+    { label:'アルバム', onClick:() => { viewPath = []; renderLibrary(); } },
+    { label:albumName, onClick:() => {} }
+  ]);
+  sortLabel.classList.remove('hidden');
+  renderTrackRows(tracks.filter(t => normalizeGroupName(t.album, 'アルバム未設定') === albumName));
+}
+function renderLibrary() {
+  trackCount.textContent = `${tracks.length}曲`;
   trackList.replaceChildren();
-  if (!sortedTracks.length) {
-    const empty = document.createElement('div'); empty.className = 'empty-list'; empty.textContent = 'MP3が見つかりません'; trackList.append(empty); return;
+  if (!tracks.length) {
+    setBreadcrumb([]);
+    const empty = document.createElement('div'); empty.className = 'empty-list'; empty.textContent = 'MP3が見つかりません'; trackList.append(empty); sortedTracks = []; return;
   }
-  for (const t of sortedTracks) {
-    const row = document.createElement('button'); row.type = 'button'; row.className = 'track-row' + (currentTrack?.key === t.key ? ' active' : '');
-    const left = document.createElement('div');
-    const title = document.createElement('div'); title.className = 'track-row-title'; title.textContent = t.title;
-    const sub = document.createElement('div'); sub.className = 'track-row-sub'; sub.textContent = [t.artist, t.album, t.path && t.path !== t.file.name ? t.path : ''].filter(Boolean).join(' ・ ') || t.file.name;
-    const size = document.createElement('div'); size.className = 'track-row-size'; size.textContent = bytes(t.file.size);
-    left.append(title, sub); row.append(left, size);
-    row.addEventListener('click', () => selectTrack(t, true));
-    trackList.append(row);
-  }
+  if (viewMode === 'folder') renderFolderView();
+  else if (viewMode === 'artist') renderArtistView();
+  else if (viewMode === 'album') renderAlbumView();
+  else renderAllView();
 }
 
 function defaultSettings() {
@@ -253,7 +430,8 @@ function getSettings() {
   const base = defaultSettings();
   if (!currentTrack) return base;
   try {
-    const raw = localStorage.getItem(storageKey(currentTrack.key));
+    let raw = localStorage.getItem(storageKey(currentTrack.key));
+    if (!raw) raw = localStorage.getItem(legacyStorageKey(currentTrack.file));
     if (!raw) return base;
     const parsed = JSON.parse(raw);
     return { ...base, ...parsed, compressor:{ ...base.compressor, ...(parsed.compressor || {}) } };
@@ -262,8 +440,8 @@ function getSettings() {
 function saveTrackSettings() {
   if (!currentTrack) return;
   const payload = {
-    gain: sliderToGain(gainSlider.value), loop: loopToggle.checked,
-    compressor: { enabled:compressorToggle.checked, threshold:Number(threshold.value), ratio:Number(ratio.value), knee:Number(knee.value), attack:Number(attack.value), release:Number(release.value), makeup:Number(makeup.value) }
+    gain:sliderToGain(gainSlider.value), loop:loopToggle.checked,
+    compressor:{ enabled:compressorToggle.checked, threshold:Number(threshold.value), ratio:Number(ratio.value), knee:Number(knee.value), attack:Number(attack.value), release:Number(release.value), makeup:Number(makeup.value) }
   };
   localStorage.setItem(storageKey(currentTrack.key), JSON.stringify(payload));
 }
@@ -344,20 +522,30 @@ async function selectTrack(t, autoplay = false) {
   trackName.textContent = t.title; trackArtist.textContent = t.artist || 'アーティスト情報なし';
   trackMeta.textContent = [t.album, bytes(t.file.size), t.path || t.file.name].filter(Boolean).join(' ・ ');
   showArtwork(t.artworkBlob); playPause.disabled = false; prevTrack.disabled = false; nextTrack.disabled = false;
-  loadTrackSettings(); updateMediaSession(t); renderTracks();
+  loadTrackSettings(); updateMediaSession(t); renderLibrary();
   if (autoplay) { try { await resumeAudioContext(); applyAudioSettings(); await audio.play(); } catch (err) { console.warn(err); } }
 }
+function playbackList() {
+  if (sortedTracks.length) return sortedTracks;
+  return sortTrackArray(tracks);
+}
 function adjacentTrack(delta) {
-  if (!currentTrack || !sortedTracks.length) return;
-  const idx = sortedTracks.findIndex(t => t.key === currentTrack.key); if (idx < 0) return;
-  selectTrack(sortedTracks[(idx + delta + sortedTracks.length) % sortedTracks.length], true);
+  const list = playbackList();
+  if (!currentTrack || !list.length) return;
+  let idx = list.findIndex(t => t.key === currentTrack.key);
+  if (idx < 0) idx = sortTrackArray(tracks).findIndex(t => t.key === currentTrack.key);
+  const source = idx >= 0 && list.some(t => t.key === currentTrack.key) ? list : sortTrackArray(tracks);
+  idx = source.findIndex(t => t.key === currentTrack.key);
+  if (idx < 0) return;
+  selectTrack(source[(idx + delta + source.length) % source.length], true);
 }
 
 chooseFolder.addEventListener('click', async () => {
   if (!('showDirectoryPicker' in window)) return;
   try {
-    directoryHandle = await window.showDirectoryPicker({ mode:'read', id:'local-mp3-music-folder' });
-    await idbSet(DIRECTORY_KEY, directoryHandle); await loadDirectory(directoryHandle);
+    directoryHandle = await window.showDirectoryPicker({ mode:'read', id:'local-mp3-music-folder', startIn:'music' });
+    await idbSet(DIRECTORY_KEY, directoryHandle);
+    await loadDirectory(directoryHandle);
   } catch (err) { if (err.name !== 'AbortError') console.error(err); }
 });
 refreshFolder.addEventListener('click', () => directoryHandle && loadDirectory(directoryHandle));
@@ -371,11 +559,23 @@ grantFolderPermission.addEventListener('click', async () => {
 fileInput.addEventListener('change', async () => {
   const files = Array.from(fileInput.files || []).filter(isMp3);
   if (!files.length) return;
+  directoryHandle = null;
   folderStatus.textContent = `手動選択: ${files.length}曲`;
-  tracks = await mapLimit(files, 4, (file) => makeTrack(file, file.name)); renderTracks();
-  if (tracks.length === 1) selectTrack(tracks[0], false);
+  setLoading(true, '曲情報を読み込み中…');
+  try {
+    tracks = await mapLimit(files, 4, (file) => makeTrack(file, file.name), (done,total) => setLoading(true, `曲情報を読み込み中… ${done}/${total}`));
+    viewPath = [];
+    renderLibrary();
+    if (tracks.length === 1) selectTrack(tracks[0], false);
+  } finally { setLoading(false); }
 });
-sortSelect.addEventListener('change', renderTracks);
+sortSelect.addEventListener('change', renderLibrary);
+viewTabs.forEach(btn => btn.addEventListener('click', () => {
+  viewMode = btn.dataset.view;
+  viewPath = [];
+  viewTabs.forEach(x => x.classList.toggle('active', x === btn));
+  renderLibrary();
+}));
 
 playPause.addEventListener('click', async () => {
   if (!audio.src) return;
@@ -387,7 +587,6 @@ back10.addEventListener('click', () => { audio.currentTime = Math.max(0, audio.c
 forward10.addEventListener('click', () => { audio.currentTime = Math.min(audio.duration || Infinity, audio.currentTime + 10); });
 seek.addEventListener('input', () => { if (Number.isFinite(audio.duration) && audio.duration > 0) audio.currentTime = Number(seek.value) / 1000 * audio.duration; });
 loopToggle.addEventListener('change', () => { audio.loop = loopToggle.checked; saveTrackSettings(); });
-
 [gainSlider, threshold, ratio, knee, attack, release, makeup].forEach(el => el.addEventListener('input', () => {
   if (!audioContext && audio.src) { try { ensureAudioGraph(); } catch (_) {} }
   applyAudioSettings(); saveTrackSettings();
@@ -419,7 +618,11 @@ function setMediaActionHandlers() {
 }
 
 async function restoreDirectory() {
-  if (!('showDirectoryPicker' in window)) { chooseFolder.disabled = true; directoryUnsupported.classList.remove('hidden'); return; }
+  if (!('showDirectoryPicker' in window)) {
+    chooseFolder.disabled = true;
+    directoryUnsupported.classList.remove('hidden');
+    return;
+  }
   try { directoryHandle = await idbGet(DIRECTORY_KEY); } catch (err) { console.warn(err); }
   if (!directoryHandle) return;
   folderStatus.textContent = `前回のフォルダ: ${directoryHandle.name}`;
@@ -428,10 +631,13 @@ async function restoreDirectory() {
     const state = await directoryHandle.queryPermission({ mode:'read' });
     if (state === 'granted') await loadDirectory(directoryHandle);
     else permissionBox.classList.remove('hidden');
-  } catch (err) { console.warn(err); permissionBox.classList.remove('hidden'); }
+  } catch (err) {
+    console.warn(err);
+    permissionBox.classList.remove('hidden');
+  }
 }
 
 window.addEventListener('beforeunload', () => { if (objectUrl) URL.revokeObjectURL(objectUrl); clearArtwork(); });
 prevTrack.disabled = true; nextTrack.disabled = true; loopToggle.checked = true; audio.loop = true;
-setMediaActionHandlers(); applyAudioSettings(); restoreDirectory();
+setMediaActionHandlers(); applyAudioSettings(); renderLibrary(); restoreDirectory();
 if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('./service-worker.js').catch(console.error));
