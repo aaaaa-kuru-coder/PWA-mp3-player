@@ -21,12 +21,50 @@
       <span class="privacy-badge">外部アップロードなし</span>
     </header>
 
-    <section class="card file-card">
-      <label class="file-button" for="fileInput">MP3を選ぶ</label>
-      <input id="fileInput" type="file" accept="audio/mpeg,audio/mp3,.mp3" />
+    <section class="card library-card">
+      <div class="library-head">
+        <div>
+          <div class="setting-title">音楽ライブラリ</div>
+          <div id="folderStatus" class="setting-note">フォルダを登録するか、MP3を選択してください</div>
+        </div>
+        <button id="refreshFolder" class="icon-button" type="button" title="一覧を更新" disabled>↻</button>
+      </div>
+      <div class="library-actions">
+        <button id="chooseFolder" class="primary-button" type="button">フォルダを登録</button>
+        <label class="secondary-button" for="fileInput">MP3を選択</label>
+        <input id="fileInput" type="file" accept="audio/mpeg,audio/mp3,.mp3" multiple />
+      </div>
+      <div id="permissionBox" class="permission-box hidden">
+        <span>登録フォルダへのアクセス許可が必要です。</span>
+        <button id="grantFolderPermission" type="button">アクセスを許可</button>
+      </div>
+      <div id="directoryUnsupported" class="warning hidden">このブラウザではフォルダ登録APIを利用できません。下の「MP3を選択」から複数曲を選べます。</div>
+
+      <div class="list-toolbar">
+        <div id="trackCount" class="track-count">0曲</div>
+        <label class="sort-label">並び順
+          <select id="sortSelect">
+            <option value="filename">ファイル名</option>
+            <option value="title">曲名</option>
+            <option value="artist">アーティスト</option>
+            <option value="album">アルバム</option>
+          </select>
+        </label>
+      </div>
+      <div id="trackList" class="track-list">
+        <div class="empty-list">まだ曲がありません</div>
+      </div>
+    </section>
+
+    <section class="card now-card">
+      <div id="artworkWrap" class="artwork-wrap placeholder">
+        <img id="artwork" alt="アルバム画像" hidden />
+        <div id="artworkPlaceholder" class="artwork-placeholder">♪</div>
+      </div>
       <div class="track-info">
         <div id="trackName" class="track-name">ファイル未選択</div>
-        <div id="trackMeta" class="track-meta">端末内のMP3を選択してください</div>
+        <div id="trackArtist" class="track-artist">—</div>
+        <div id="trackMeta" class="track-meta">ライブラリから曲を選択してください</div>
       </div>
     </section>
 
@@ -40,18 +78,20 @@
       </div>
 
       <div class="transport">
+        <button id="prevTrack" class="secondary" type="button" aria-label="前の曲">⏮</button>
         <button id="back10" class="secondary" type="button" aria-label="10秒戻る">−10s</button>
         <button id="playPause" class="play" type="button" disabled>▶</button>
         <button id="forward10" class="secondary" type="button" aria-label="10秒進む">+10s</button>
+        <button id="nextTrack" class="secondary" type="button" aria-label="次の曲">⏭</button>
       </div>
 
       <div class="setting-row">
         <div>
           <div class="setting-title">ループ</div>
-          <div class="setting-note">同じファイルを繰り返します</div>
+          <div class="setting-note">新しい曲はデフォルトON・曲ごとに記憶</div>
         </div>
         <label class="switch">
-          <input id="loopToggle" type="checkbox" />
+          <input id="loopToggle" type="checkbox" checked />
           <span class="slider"></span>
         </label>
       </div>
@@ -60,7 +100,7 @@
         <div class="gain-head">
           <div>
             <div class="setting-title">プレイヤー音量補正</div>
-            <div class="setting-note">スマホ本体音量とは別の倍率</div>
+            <div class="setting-note">スマホ本体音量とは別の倍率・曲ごとに記憶</div>
           </div>
           <output id="gainValue">1.00×</output>
         </div>
@@ -68,12 +108,45 @@
         <div class="gain-scale"><span>1/3×</span><span>1.0×</span><span>1.5×</span></div>
         <div id="gainDb" class="gain-db">0.00 dB</div>
       </div>
+
+      <div class="compressor-block">
+        <div class="setting-row compressor-toggle-row">
+          <div>
+            <div class="setting-title">コンプレッサー</div>
+            <div class="setting-note">大きい部分を圧縮して音量差を抑えます</div>
+          </div>
+          <label class="switch">
+            <input id="compressorToggle" type="checkbox" />
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div id="compressorControls" class="compressor-controls disabled-panel">
+          <label>しきい値 <output id="thresholdValue">-35 dB</output>
+            <input id="threshold" type="range" min="-60" max="0" value="-35" step="1" />
+          </label>
+          <label>比率 <output id="ratioValue">2.5 : 1</output>
+            <input id="ratio" type="range" min="1" max="12" value="2.5" step="0.1" />
+          </label>
+          <label>ニー <output id="kneeValue">20 dB</output>
+            <input id="knee" type="range" min="0" max="40" value="20" step="1" />
+          </label>
+          <label>アタック <output id="attackValue">10 ms</output>
+            <input id="attack" type="range" min="0" max="0.2" value="0.01" step="0.001" />
+          </label>
+          <label>リリース <output id="releaseValue">250 ms</output>
+            <input id="release" type="range" min="0.02" max="1" value="0.25" step="0.01" />
+          </label>
+          <label>出力ゲイン <output id="makeupValue">0.0 dB</output>
+            <input id="makeup" type="range" min="-6" max="12" value="0" step="0.1" />
+          </label>
+        </div>
+      </div>
     </section>
 
     <section class="card note-card">
       <strong>プライバシー設計</strong>
-      <p>選んだMP3はブラウザ内の <code>blob:</code> URLとして再生します。このアプリ自身にはアップロード処理・解析送信・外部CDN・広告・アクセス解析を入れていません。</p>
-      <p class="small">曲ごとの音量倍率とループ設定だけ、ファイル名・サイズ・更新日時をキーに端末の localStorage へ保存します。MP3音声データ自体は保存しません。</p>
+      <p>MP3は端末から直接 <code>File</code> として読み、<code>blob:</code> URLで再生します。アプリ自身にMP3アップロード処理・外部API・CDN・広告・アクセス解析はありません。</p>
+      <p class="small">登録フォルダのハンドルは IndexedDB、曲別の音量・ループ・コンプレッサー設定は localStorage に保存します。アルバム画像/曲名/アーティスト/アルバムはMP3内のID3タグを端末上で読み取ります。</p>
     </section>
   </main>
 

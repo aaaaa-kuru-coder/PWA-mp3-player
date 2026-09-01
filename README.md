@@ -1,55 +1,60 @@
-# Local MP3 Player (GitHub Pages / PWA)
+# Local MP3 Player v2 (GitHub Pages / PWA)
 
-スマホ上のMP3をユーザーが選択し、ブラウザ内で `blob:` URLとして再生する最小構成のPWAです。
+端末内の音楽フォルダを登録し、そのフォルダ（サブフォルダ含む）のMP3を一覧表示・再生するPWAです。MP3本体をサーバーへアップロードする処理はありません。
 
-## 主な機能
+## v2の主な機能
 
-- 端末内MP3を `<input type="file">` で選択
-- 再生 / 一時停止
-- 10秒戻る / 進む
-- シーク
-- ループ
-- プレイヤー独自の音量倍率 1/3〜1.5倍（指数スライダー）
-- 曲ごとの倍率・ループ設定を localStorage に保存
-- Media Session API が使える環境では、OS側の再生/停止/シーク操作にも対応
-- PWAとしてホーム画面追加
-- Service Workerはアプリ本体だけをキャッシュし、MP3はキャッシュしない
+- `showDirectoryPicker()` による音楽フォルダ登録
+- 登録した `FileSystemDirectoryHandle` を IndexedDB に保存
+- 次回起動時、権限が残っていれば同じフォルダを自動走査
+- 権限の再確認が必要な場合だけ「アクセスを許可」ボタンを表示
+- 非対応ブラウザ向けに複数MP3ファイル選択をフォールバックとして維持
+- フォルダのサブフォルダも再帰的に検索
+- MP3のID3v2タグから曲名 / アーティスト / アルバム / APICアルバム画像を端末上で取得
+- 一覧をファイル名 / 曲名 / アーティスト / アルバムでソート
+- 再生 / 一時停止 / 前曲 / 次曲 / 10秒戻る / 進む / シーク
+- ループは新規曲でデフォルトON、曲ごとに設定保存
+- プレイヤー独自の音量倍率 1/3〜1.5倍（指数スライダー）、曲ごとに保存
+- Web Audio API `DynamicsCompressorNode` のコンプレッサー（デフォルトOFF）
+- コンプレッサーの threshold / ratio / knee / attack / release / makeup gain を曲ごとに保存
+- Media Session API 対応
+- Service Workerはアプリ本体のみキャッシュ。MP3はキャッシュしない
 
 ## GitHub Pagesへの配置
 
-1. GitHubで新しいリポジトリを作る。
-2. このフォルダの中身をリポジトリ直下へアップロードする。
-3. Repository Settings → Pages を開く。
-4. Deploy from a branch を選び、`main` / `(root)` を指定する。
-5. 発行された `https://<ユーザー名>.github.io/<リポジトリ名>/` をスマホChromeで開く。
-6. Chromeメニューから「ホーム画面に追加」または「アプリをインストール」。
+1. このフォルダの中身をGitHubリポジトリ直下へ置く。
+2. Repository Settings → Pages → Deploy from a branch。
+3. `main` / `(root)` を選択。
+4. 発行されたHTTPS URLをAndroid Chromeで開く。
+5. 「フォルダを登録」からMusicフォルダ等を一度選ぶ。
+6. 必要なら「ホーム画面に追加」/「アプリをインストール」。
 
-## MP3データの通信について
+## フォルダ記憶について
 
-### このコード自身がMP3を送信する処理
+Webアプリは端末の任意フォルダを無断で読み取れません。初回は必ずユーザーがフォルダを選択します。その後はディレクトリーハンドルをIndexedDBへ保存します。ブラウザが読み取り権限を維持していれば次回起動時に自動一覧化します。権限が `prompt` に戻っている場合は、ユーザー操作で再許可が必要です。
 
-ありません。
+## ID3タグ / アルバム画像
 
-ファイル選択後は `URL.createObjectURL(file)` でブラウザ内の一時的な `blob:` URLを作り、そのURLを `<audio>` に渡します。`fetch()`、`XMLHttpRequest`、Firebase、外部API、CDN、アクセス解析コードなどはMP3処理に使っていません。
+外部ライブラリを使わず、アプリ内の小さなID3v2.3/v2.4パーサーで `TIT2` / `TPE1` / `TALB` / `APIC` を読みます。一般的なMP3では動作しますが、特殊なID3タグ、巨大なタグ、ID3v1のみのファイル等ではメタデータを取得できない場合があります。その場合はファイル名で表示します。
 
-### GitHubへ通信するもの
+## コンプレッサー
 
-最初にページを開く際、HTML/CSS/JavaScript/manifest/iconなど「プレイヤー本体」はGitHub PagesからHTTPSで取得されます。Service Worker登録後は、それらのアプリファイルをブラウザキャッシュから使える場合があります。
+音声経路は概ね以下です。
 
-### MP3設定として端末内に保存されるもの
+`MP3 -> Track Gain -> (Compressor -> Makeup Gain) -> Output`
 
-localStorageに以下だけを保存します。
+コンプレッサーOFF時はCompressor経路をバイパスします。MP3ファイル自体を書き換えません。
 
-- ファイル名
-- ファイルサイズ
-- 最終更新日時を組み合わせた識別キー
-- 音量倍率
-- ループON/OFF
+## プライバシー / 通信
 
-MP3の音声内容はlocalStorageへ保存しません。
+- MP3は `File` → `blob:` URLとして端末内で再生します。
+- ID3タグ・アルバム画像の解析も端末内です。
+- MP3アップロード用の `fetch` / XHR / WebSocket / Firebase / 外部APIはありません。
+- CSPは `connect-src 'none'` です。
+- 外部CDN、広告、アクセス解析、外部フォントは使っていません。
+- GitHub Pagesから通信して取得するのはHTML/CSS/JS/manifest/icon等の「アプリ本体」です。
+- Webページのコード自体が侵害・差し替えされた場合など、別レイヤーのリスクまでゼロにはできません。
 
-### 注意
+## 注意
 
-WebページのJavaScriptは、ユーザーが選択したFileオブジェクトの内容を読むこと自体は可能です。つまり、悪意あるコードに差し替えられれば理論上アップロード処理を追加できます。この版ではCSPで `connect-src 'none'` を指定し、ページからの一般的なHTTP/WebSocket通信を禁止しています。ただし、GitHubアカウントやリポジトリ自体が侵害されてページコードを丸ごと差し替えられるリスクまではゼロにはできません。
-
-より厳密にしたければ、この同じファイル群を端末内だけでホストする/ローカル環境で使う方法もあります。
+`showDirectoryPicker()` はブラウザ依存です。Android Chromeなど対応ブラウザを想定し、非対応環境では複数ファイル選択を使ってください。SDカードがOSのフォルダ選択画面に表示され、選択可能であれば同じ仕組みで利用できます。
