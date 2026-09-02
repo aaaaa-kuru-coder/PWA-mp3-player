@@ -18,7 +18,19 @@
         <p class="eyebrow">LOCAL-ONLY PLAYER</p>
         <h1>MP3 Player</h1>
       </div>
-      <span class="privacy-badge">外部アップロードなし</span>
+      <div class="header-actions">
+        <span class="privacy-badge">外部アップロードなし</span>
+        <div class="menu-wrap">
+          <button id="appMenuButton" class="menu-button" type="button" aria-label="アプリメニュー" aria-expanded="false">☰</button>
+          <div id="appMenu" class="popup-menu hidden" role="menu">
+            <button id="chooseFolder" type="button" role="menuitem">📁 音楽フォルダを登録・変更</button>
+            <button id="refreshFolder" type="button" role="menuitem" disabled>↻ ライブラリを更新</button>
+            <button id="analyzeMetadata" type="button" role="menuitem" disabled>🏷 未解析の曲情報を取得</button>
+            <label class="menu-file-item" for="fileInput">🎵 MP3を一時選択</label>
+            <input id="fileInput" type="file" accept="audio/mpeg,audio/mp3,.mp3" multiple />
+          </div>
+        </div>
+      </div>
     </header>
 
     <section class="card library-card">
@@ -30,20 +42,16 @@
       <div class="library-head">
         <div>
           <div class="setting-title">音楽ライブラリ</div>
-          <div id="folderStatus" class="setting-note">フォルダを登録するか、MP3を選択してください</div>
+          <div id="folderStatus" class="setting-note">右上の ☰ から音楽フォルダを登録してください</div>
+          <div id="metadataStatus" class="metadata-status hidden"></div>
         </div>
-        <button id="refreshFolder" class="icon-button" type="button" title="一覧を更新" disabled>↻</button>
       </div>
-      <div class="library-actions">
-        <button id="chooseFolder" class="primary-button" type="button">フォルダを登録</button>
-        <label class="secondary-button" for="fileInput">MP3を選択</label>
-        <input id="fileInput" type="file" accept="audio/mpeg,audio/mp3,.mp3" multiple />
-      </div>
+
       <div id="permissionBox" class="permission-box hidden">
         <span>登録フォルダへのアクセス許可が必要です。</span>
         <button id="grantFolderPermission" type="button">アクセスを許可</button>
       </div>
-      <div id="directoryUnsupported" class="warning hidden">このブラウザではフォルダ登録APIを利用できません。「MP3を選択」から複数曲を選べます。</div>
+      <div id="directoryUnsupported" class="warning hidden">このブラウザではフォルダ登録APIを利用できません。右上メニューの「MP3を一時選択」から複数曲を選べます。</div>
 
       <div class="view-tabs" role="tablist" aria-label="ライブラリ表示モード">
         <button class="view-tab active" type="button" data-view="all">全曲</button>
@@ -91,26 +99,27 @@
         <span id="duration">0:00</span>
       </div>
 
-      <div class="transport">
-        <button id="prevTrack" class="secondary" type="button" aria-label="前の曲">⏮</button>
-        <button id="back10" class="secondary" type="button" aria-label="10秒戻る">−10s</button>
-        <button id="playPause" class="play" type="button" disabled>▶</button>
-        <button id="forward10" class="secondary" type="button" aria-label="10秒進む">+10s</button>
-        <button id="nextTrack" class="secondary" type="button" aria-label="次の曲">⏭</button>
-      </div>
-
-      <div class="setting-row">
-        <div>
-          <div class="setting-title">ループ</div>
-          <div class="setting-note">新しい曲はデフォルトON・曲ごとに記憶</div>
+      <div class="transport-wrap">
+        <div class="transport">
+          <button id="prevTrack" class="secondary" type="button" aria-label="前の曲">⏮</button>
+          <button id="back10" class="secondary" type="button" aria-label="10秒戻る">−10s</button>
+          <button id="playPause" class="play" type="button" disabled>▶</button>
+          <button id="forward10" class="secondary" type="button" aria-label="10秒進む">+10s</button>
+          <button id="nextTrack" class="secondary" type="button" aria-label="次の曲">⏭</button>
+          <div class="loop-menu-wrap">
+            <button id="loopMenuButton" class="more-button" type="button" aria-label="ループモード" aria-expanded="false">…</button>
+            <div id="loopMenu" class="popup-menu loop-menu hidden" role="menu">
+              <div class="popup-title">ループモード</div>
+              <label><input type="radio" name="loopMode" value="one" checked /> 🔂 1曲を繰り返す</label>
+              <label><input type="radio" name="loopMode" value="list" /> 🔁 現在の一覧を繰り返す</label>
+              <label><input type="radio" name="loopMode" value="off" /> ➡️ ループしない</label>
+            </div>
+          </div>
         </div>
-        <label class="switch">
-          <input id="loopToggle" type="checkbox" checked />
-          <span class="slider"></span>
-        </label>
+        <div id="loopModeLabel" class="loop-mode-label">🔂 1曲ループ</div>
       </div>
 
-      <div class="gain-block">
+      <div class="gain-block compact-top">
         <div class="gain-head">
           <div>
             <div class="setting-title">プレイヤー音量補正</div>
@@ -158,9 +167,9 @@
     </section>
 
     <section class="card note-card">
-      <strong>プライバシー設計</strong>
-      <p>MP3は端末から直接 <code>File</code> として読み、<code>blob:</code> URLで再生します。アプリ自身にMP3アップロード処理・外部API・CDN・広告・アクセス解析はありません。</p>
-      <p class="small">登録フォルダのハンドルは IndexedDB、曲別の音量・ループ・コンプレッサー設定は localStorage に保存します。ID3タグも端末上で解析します。</p>
+      <strong>高速起動・プライバシー設計</strong>
+      <p>通常起動では前回のライブラリ情報を IndexedDB から即表示し、音楽フォルダ全体を毎回走査しません。実フォルダの確認は右上メニューの「ライブラリを更新」で手動実行します。</p>
+      <p class="small">MP3本体は再生する曲だけ端末から取得します。ID3の文字情報は未解析曲だけ遅延取得し、ジャケット画像は原則として再生時にだけ読みます。外部API・CDN・広告・アクセス解析・MP3アップロード処理はありません。</p>
     </section>
   </main>
 
