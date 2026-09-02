@@ -19,7 +19,6 @@
         <h1>MP3 Player</h1>
       </div>
       <div class="header-actions">
-        <span class="privacy-badge">外部アップロードなし</span>
         <div class="menu-wrap">
           <button id="appMenuButton" class="menu-button" type="button" aria-label="アプリメニュー" aria-expanded="false">☰</button>
           <div id="appMenu" class="popup-menu hidden" role="menu">
@@ -28,6 +27,8 @@
             <button id="analyzeMetadata" type="button" role="menuitem" disabled>🏷 未解析の曲情報を取得</button>
             <label class="menu-file-item" for="fileInput">🎵 MP3を一時選択</label>
             <input id="fileInput" type="file" accept="audio/mpeg,audio/mp3,.mp3" multiple />
+            <div class="menu-divider"></div>
+            <button id="showAppInfo" type="button" role="menuitem">ℹ️ アプリ仕様・プライバシー</button>
           </div>
         </div>
       </div>
@@ -54,10 +55,10 @@
       <div id="directoryUnsupported" class="warning hidden">このブラウザではフォルダ登録APIを利用できません。右上メニューの「MP3を一時選択」から複数曲を選べます。</div>
 
       <div class="view-tabs" role="tablist" aria-label="ライブラリ表示モード">
-        <button class="view-tab active" type="button" data-view="all">全曲</button>
-        <button class="view-tab" type="button" data-view="folder">フォルダ</button>
-        <button class="view-tab" type="button" data-view="artist">アーティスト</button>
-        <button class="view-tab" type="button" data-view="album">アルバム</button>
+        <button class="view-tab active" type="button" data-view="all"><span>🎵</span><span>全曲</span></button>
+        <button class="view-tab" type="button" data-view="folder"><span>📁</span><span>フォルダ</span></button>
+        <button class="view-tab" type="button" data-view="artist"><span>👤</span><span>アーティスト</span></button>
+        <button class="view-tab" type="button" data-view="album"><span>💿</span><span>アルバム</span></button>
       </div>
 
       <div id="breadcrumb" class="breadcrumb hidden" aria-label="現在位置"></div>
@@ -77,21 +78,29 @@
         <div class="empty-list">まだ曲がありません</div>
       </div>
     </section>
+  </main>
 
-    <section class="card now-card">
+  <section id="playerDrawer" class="player-drawer collapsed" aria-label="再生パネル">
+    <button id="drawerHandle" class="drawer-handle" type="button" aria-label="再生パネルを開く" aria-expanded="false">
+      <span class="drawer-grip"></span>
+      <span id="drawerChevron" class="drawer-chevron">⌃</span>
+    </button>
+
+    <div class="mini-player">
       <div id="artworkWrap" class="artwork-wrap placeholder">
         <img id="artwork" alt="アルバム画像" hidden />
         <div id="artworkPlaceholder" class="artwork-placeholder">♪</div>
       </div>
-      <div class="track-info">
+      <div class="track-info mini-track-info">
         <div id="trackName" class="track-name">ファイル未選択</div>
         <div id="trackArtist" class="track-artist">—</div>
-        <div id="trackMeta" class="track-meta">ライブラリから曲を選択してください</div>
       </div>
-    </section>
+      <button id="playPause" class="mini-play" type="button" disabled aria-label="再生・一時停止">▶</button>
+    </div>
 
-    <section class="card player-card">
+    <div id="drawerExpanded" class="drawer-expanded">
       <audio id="audio" preload="metadata"></audio>
+      <div id="trackMeta" class="track-meta">ライブラリから曲を選択してください</div>
 
       <div class="time-row">
         <span id="currentTime">0:00</span>
@@ -103,7 +112,6 @@
         <div class="transport">
           <button id="prevTrack" class="secondary" type="button" aria-label="前の曲">⏮</button>
           <button id="back10" class="secondary" type="button" aria-label="10秒戻る">−10s</button>
-          <button id="playPause" class="play" type="button" disabled>▶</button>
           <button id="forward10" class="secondary" type="button" aria-label="10秒進む">+10s</button>
           <button id="nextTrack" class="secondary" type="button" aria-label="次の曲">⏭</button>
           <div class="loop-menu-wrap">
@@ -164,14 +172,31 @@
           </label>
         </div>
       </div>
-    </section>
+    </div>
+  </section>
 
-    <section class="card note-card">
-      <strong>高速起動・プライバシー設計</strong>
-      <p>通常起動では前回のライブラリ情報を IndexedDB から即表示し、音楽フォルダ全体を毎回走査しません。実フォルダの確認は右上メニューの「ライブラリを更新」で手動実行します。</p>
-      <p class="small">MP3本体は再生する曲だけ端末から取得します。ID3の文字情報は未解析曲だけ遅延取得し、ジャケット画像は原則として再生時にだけ読みます。外部API・CDN・広告・アクセス解析・MP3アップロード処理はありません。</p>
-    </section>
-  </main>
+  <div id="permissionModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="permissionModalTitle">
+    <div class="modal-card">
+      <div id="permissionModalTitle" class="modal-title">フォルダへのアクセスが必要です</div>
+      <p id="permissionModalText">この曲を開くには、登録済みの音楽フォルダへのアクセスを許可してください。</p>
+      <div class="modal-actions">
+        <button id="cancelPermissionModal" class="modal-secondary" type="button">キャンセル</button>
+        <button id="grantTrackPermission" class="modal-primary" type="button">アクセスを許可して再生</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="appInfoModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="appInfoTitle">
+    <div class="modal-card info-modal-card">
+      <div id="appInfoTitle" class="modal-title">アプリ仕様・プライバシー</div>
+      <p>通常起動では前回のライブラリ情報を IndexedDB から表示し、音楽フォルダ全体を毎回走査しません。実フォルダの確認は右上メニューの「ライブラリを更新」で手動実行します。</p>
+      <p>MP3本体は再生する曲だけ端末から取得します。ID3の文字情報は未解析曲だけ遅延取得し、ジャケット画像は原則として再生時にだけ読みます。</p>
+      <p>外部API・CDN・広告・アクセス解析・MP3アップロード処理はありません。PWA本体の取得・更新確認としてGitHub Pagesとの通常のWeb通信は発生しますが、ローカルMP3をその通信へ載せる処理はありません。</p>
+      <div class="modal-actions single-action">
+        <button id="closeAppInfo" class="modal-primary" type="button">閉じる</button>
+      </div>
+    </div>
+  </div>
 
   <script src="./app.js"></script>
 </body>

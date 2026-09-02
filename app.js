@@ -55,6 +55,16 @@ const release = $('release');
 const releaseValue = $('releaseValue');
 const makeup = $('makeup');
 const makeupValue = $('makeupValue');
+const playerDrawer = $('playerDrawer');
+const drawerHandle = $('drawerHandle');
+const drawerChevron = $('drawerChevron');
+const showAppInfo = $('showAppInfo');
+const appInfoModal = $('appInfoModal');
+const closeAppInfo = $('closeAppInfo');
+const permissionModal = $('permissionModal');
+const permissionModalText = $('permissionModalText');
+const grantTrackPermission = $('grantTrackPermission');
+const cancelPermissionModal = $('cancelPermissionModal');
 
 const GAIN_MIN = 1 / 3;
 const GAIN_MAX = 1.5;
@@ -82,6 +92,8 @@ let viewMode = 'all';
 let viewPath = [];
 let metadataRunId = 0;
 let cacheSaveTimer = null;
+let pendingTrackRequest = null;
+let drawerTouchStartY = null;
 
 function setLoading(show, text = '音楽ライブラリを読み込み中…') {
   loadingText.textContent = text;
@@ -544,6 +556,22 @@ function updateMediaSession(t) {
   if (t.artworkBlob) { const u = URL.createObjectURL(t.artworkBlob); metadata.artwork = [{ src:u, sizes:'512x512', type:t.artworkBlob.type || 'image/jpeg' }]; setTimeout(() => URL.revokeObjectURL(u), 30000); }
   navigator.mediaSession.metadata = new MediaMetadata(metadata);
 }
+async function permissionStateForTrack(t) {
+  if (t.file) return 'granted';
+  const target = directoryHandle || t.handle;
+  if (!target?.queryPermission) return 'prompt';
+  try { return await target.queryPermission({ mode:'read' }); }
+  catch (_) { return 'prompt'; }
+}
+function showTrackPermissionPrompt(t, autoplay = false) {
+  pendingTrackRequest = { track:t, autoplay };
+  permissionModalText.textContent = `「${t.title || t.name || 'この曲'}」を開くには、登録済みの音楽フォルダへのアクセスを許可してください。`;
+  permissionModal.classList.remove('hidden');
+}
+function hideTrackPermissionPrompt() {
+  permissionModal.classList.add('hidden');
+  pendingTrackRequest = null;
+}
 async function ensureTrackFile(t) {
   if (t.file) return t.file;
   if (!t.handle) throw new Error('この曲のファイルハンドルがありません。');
@@ -555,6 +583,14 @@ async function ensureTrackFile(t) {
 }
 async function selectTrack(t, autoplay = false) {
   try {
+    if (t.handle) {
+      const permission = await permissionStateForTrack(t);
+      if (permission !== 'granted') {
+        permissionBox.classList.remove('hidden');
+        showTrackPermissionPrompt(t, autoplay);
+        return;
+      }
+    }
     const file = await ensureTrackFile(t);
     if (objectUrl) URL.revokeObjectURL(objectUrl);
     currentTrack = t;
@@ -590,9 +626,51 @@ function closeMenus(except = null) {
   if (except !== 'app') { appMenu.classList.add('hidden'); appMenuButton.setAttribute('aria-expanded','false'); }
   if (except !== 'loop') { loopMenu.classList.add('hidden'); loopMenuButton.setAttribute('aria-expanded','false'); }
 }
+function setDrawerExpanded(expanded) {
+  playerDrawer.classList.toggle('expanded', expanded);
+  playerDrawer.classList.toggle('collapsed', !expanded);
+  drawerHandle.setAttribute('aria-expanded', String(expanded));
+  drawerHandle.setAttribute('aria-label', expanded ? '再生パネルを閉じる' : '再生パネルを開く');
+  drawerChevron.textContent = expanded ? '⌄' : '⌃';
+  document.body.classList.toggle('drawer-open', expanded);
+}
+function toggleDrawer() { setDrawerExpanded(!playerDrawer.classList.contains('expanded')); }
 appMenuButton.addEventListener('click', e => { e.stopPropagation(); const open = appMenu.classList.contains('hidden'); closeMenus(open ? 'app' : null); appMenu.classList.toggle('hidden', !open); appMenuButton.setAttribute('aria-expanded', String(open)); });
 loopMenuButton.addEventListener('click', e => { e.stopPropagation(); const open = loopMenu.classList.contains('hidden'); closeMenus(open ? 'loop' : null); loopMenu.classList.toggle('hidden', !open); loopMenuButton.setAttribute('aria-expanded', String(open)); });
 document.addEventListener('click', e => { if (!appMenu.contains(e.target) && !loopMenu.contains(e.target)) closeMenus(); });
+
+drawerHandle.addEventListener('click', toggleDrawer);
+drawerHandle.addEventListener('touchstart', e => { drawerTouchStartY = e.touches?.[0]?.clientY ?? null; }, { passive:true });
+drawerHandle.addEventListener('touchend', e => {
+  if (drawerTouchStartY == null) return;
+  const endY = e.changedTouches?.[0]?.clientY ?? drawerTouchStartY;
+  const delta = endY - drawerTouchStartY;
+  drawerTouchStartY = null;
+  if (delta < -45) setDrawerExpanded(true);
+  else if (delta > 45) setDrawerExpanded(false);
+}, { passive:true });
+
+showAppInfo.addEventListener('click', () => { closeMenus(); appInfoModal.classList.remove('hidden'); });
+closeAppInfo.addEventListener('click', () => appInfoModal.classList.add('hidden'));
+appInfoModal.addEventListener('click', e => { if (e.target === appInfoModal) appInfoModal.classList.add('hidden'); });
+cancelPermissionModal.addEventListener('click', hideTrackPermissionPrompt);
+permissionModal.addEventListener('click', e => { if (e.target === permissionModal) hideTrackPermissionPrompt(); });
+grantTrackPermission.addEventListener('click', async () => {
+  const pending = pendingTrackRequest;
+  if (!pending) return hideTrackPermissionPrompt();
+  const target = directoryHandle || pending.track.handle;
+  if (!target?.requestPermission) return;
+  try {
+    const state = await target.requestPermission({ mode:'read' });
+    if (state === 'granted') {
+      permissionBox.classList.add('hidden');
+      refreshFolder.disabled = false;
+      permissionModal.classList.add('hidden');
+      pendingTrackRequest = null;
+      await selectTrack(pending.track, pending.autoplay);
+    }
+  } catch (err) { console.error(err); }
+});
 
 chooseFolder.addEventListener('click', async () => {
   closeMenus(); if (!('showDirectoryPicker' in window)) return;
@@ -606,8 +684,19 @@ refreshFolder.addEventListener('click', async () => { closeMenus(); if (!directo
 analyzeMetadataButton.addEventListener('click', () => { closeMenus(); enrichMetadataInBackground(false); });
 grantFolderPermission.addEventListener('click', async () => {
   if (!directoryHandle) return;
-  try { const state = await directoryHandle.requestPermission({ mode:'read' }); if (state === 'granted') { permissionBox.classList.add('hidden'); refreshFolder.disabled = false; } }
-  catch (err) { console.error(err); }
+  try {
+    const state = await directoryHandle.requestPermission({ mode:'read' });
+    if (state === 'granted') {
+      permissionBox.classList.add('hidden');
+      refreshFolder.disabled = false;
+      if (pendingTrackRequest) {
+        const pending = pendingTrackRequest;
+        permissionModal.classList.add('hidden');
+        pendingTrackRequest = null;
+        await selectTrack(pending.track, pending.autoplay);
+      }
+    }
+  } catch (err) { console.error(err); }
 });
 fileInput.addEventListener('change', async () => {
   closeMenus(); metadataRunId++;
@@ -667,5 +756,5 @@ async function restoreDirectoryAndCache() {
 }
 
 window.addEventListener('beforeunload', () => { metadataRunId++; if (objectUrl) URL.revokeObjectURL(objectUrl); clearArtwork(); });
-prevTrack.disabled = true; nextTrack.disabled = true; setLoopMode('one'); setMediaActionHandlers(); applyAudioSettings(); renderLibrary(); restoreDirectoryAndCache();
+prevTrack.disabled = true; nextTrack.disabled = true; setLoopMode('one'); setDrawerExpanded(false); setMediaActionHandlers(); applyAudioSettings(); renderLibrary(); restoreDirectoryAndCache();
 if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('./service-worker.js').catch(console.error));
