@@ -1,7 +1,7 @@
 {
-  "name": "Local MP3 Player v5",
+  "name": "Local MP3 Player v6",
   "short_name": "MP3 Player",
-  "description": "キャッシュ式ライブラリと遅延読み込み、収納式プレイヤーUIを備えた端末内MP3向けローカルPWAプレイヤー",
+  "description": "キャッシュ式ライブラリと遅延読み込み、高速キャッシュと滑らかな収納式プレイヤーUIを備えた端末内MP3向けローカルPWAプレイヤー",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

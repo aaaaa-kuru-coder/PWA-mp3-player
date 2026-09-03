@@ -61,10 +61,6 @@ const drawerChevron = $('drawerChevron');
 const showAppInfo = $('showAppInfo');
 const appInfoModal = $('appInfoModal');
 const closeAppInfo = $('closeAppInfo');
-const permissionModal = $('permissionModal');
-const permissionModalText = $('permissionModalText');
-const grantTrackPermission = $('grantTrackPermission');
-const cancelPermissionModal = $('cancelPermissionModal');
 
 const GAIN_MIN = 1 / 3;
 const GAIN_MAX = 1.5;
@@ -73,7 +69,9 @@ const HANDLE_STORE = 'handles';
 const LIBRARY_STORE = 'library';
 const DIRECTORY_KEY = 'music-directory';
 const LIBRARY_KEY = 'library-cache-v4';
-const SETTINGS_PREFIX = 'local-mp3-player:v4:';
+const SETTINGS_PREFIX = 'local-mp3-player:v6:';
+const V5_PREFIX = 'local-mp3-player:v5:';
+const V4_PREFIX = 'local-mp3-player:v4:';
 const V3_PREFIX = 'local-mp3-player:v3:';
 const LEGACY_PREFIX = 'local-mp3-player:v2:';
 
@@ -92,8 +90,9 @@ let viewMode = 'all';
 let viewPath = [];
 let metadataRunId = 0;
 let cacheSaveTimer = null;
-let pendingTrackRequest = null;
-let drawerTouchStartY = null;
+let cachedFolderName = '';
+let drawerDrag = null;
+let suppressDrawerClick = false;
 
 function setLoading(show, text = '音楽ライブラリを読み込み中…') {
   loadingText.textContent = text;
@@ -102,6 +101,10 @@ function setLoading(show, text = '音楽ライブラリを読み込み中…') {
 function setMetadataStatus(text = '') {
   metadataStatus.textContent = text;
   metadataStatus.classList.toggle('hidden', !text);
+}
+function updateLibrarySummary(label = null) {
+  const folderName = label || directoryHandle?.name || cachedFolderName || (tracks.length ? '一時選択' : '未登録');
+  folderStatus.textContent = `音楽ライブラリ：${folderName}（${tracks.length}曲）`;
 }
 function sliderToGain(value) {
   const t = Number(value) / 1000;
@@ -200,7 +203,8 @@ async function loadLibraryCache() {
     const cached = await idbGet(LIBRARY_STORE, LIBRARY_KEY);
     if (!cached?.tracks?.length) return false;
     tracks = cached.tracks.map(t => ({ ...t, file:null, artworkBlob:null, artworkScanned:false }));
-    folderStatus.textContent = `キャッシュ済み: ${cached.folderName || '音楽フォルダ'} ・ ${tracks.length}曲`;
+    cachedFolderName = cached.folderName || '音楽フォルダ';
+    updateLibrarySummary(cachedFolderName);
     viewPath = [];
     renderLibrary();
     return true;
@@ -310,7 +314,7 @@ async function refreshLibraryStructure(handle) {
     });
     tracks = next;
     viewPath = [];
-    folderStatus.textContent = `登録フォルダ: ${handle.name} ・ ${tracks.length}曲`;
+    cachedFolderName = handle.name; updateLibrarySummary(handle.name);
     renderLibrary();
     await saveLibraryCache();
     setLoading(false);
@@ -322,7 +326,7 @@ async function refreshLibraryStructure(handle) {
     } else setMetadataStatus('');
   } catch (err) {
     console.error(err);
-    folderStatus.textContent = 'フォルダ構造の読み込みに失敗しました';
+    folderStatus.textContent = '音楽ライブラリ：読み込み失敗';
     if (err?.name === 'NotAllowedError') permissionBox.classList.remove('hidden');
     setLoading(false);
   } finally {
@@ -381,14 +385,11 @@ function makeTrackRow(t) {
   const row = document.createElement('button');
   row.type = 'button';
   row.className = 'track-row' + (currentTrack?.path === t.path ? ' active' : '');
-  const left = document.createElement('div');
-  const title = document.createElement('div'); title.className = 'track-row-title'; title.textContent = t.title || t.name.replace(/\.mp3$/i, '');
-  const sub = document.createElement('div'); sub.className = 'track-row-sub';
-  const info = [t.artist, t.album, t.path && t.path !== t.name ? t.path : ''].filter(Boolean);
-  sub.textContent = info.join(' ・ ') || (t.metadataLoaded ? t.name : `${t.name} ・ 曲情報未解析`);
-  const right = document.createElement('div'); right.className = 'track-row-size'; right.textContent = bytes(t.size) || (t.metadataLoaded ? '' : '…');
-  left.append(title, sub); row.append(left, right);
-  row.addEventListener('click', () => selectTrack(t, true));
+  const title = document.createElement('div');
+  title.className = 'track-row-title';
+  title.textContent = t.title || t.name.replace(/\.mp3$/i, '');
+  row.append(title);
+  row.addEventListener('click', () => selectTrack(t, true, true));
   return row;
 }
 function makeFolderRow(name, subtitle, onClick) {
@@ -415,9 +416,8 @@ function renderTrackRows(list) {
   for (const t of sorted) trackList.append(makeTrackRow(t));
 }
 function groupCountText(list) { return `${list.length}曲`; }
-function renderAllView() { setBreadcrumb([]); sortLabel.classList.remove('hidden'); renderTrackRows(tracks); }
+function renderAllView() { setBreadcrumb([]); renderTrackRows(tracks); }
 function renderFolderView() {
-  sortLabel.classList.add('hidden');
   const pathPrefix = viewPath.length ? `${viewPath.join('/')}/` : '';
   const immediateFolders = new Map(); const directTracks = [];
   for (const t of tracks) {
@@ -434,7 +434,6 @@ function renderFolderView() {
   renderTrackRows(directTracks);
 }
 function renderArtistView() {
-  sortLabel.classList.add('hidden');
   const artistName = viewPath[0] || null; const albumName = viewPath[1] || null;
   if (!artistName) {
     setBreadcrumb([]); const groups = new Map();
@@ -453,11 +452,9 @@ function renderArtistView() {
     return;
   }
   setBreadcrumb([{ label:'アーティスト', onClick:() => { viewPath = []; renderLibrary(); } }, { label:artistName, onClick:() => { viewPath = [artistName]; renderLibrary(); } }, { label:albumName, onClick:() => {} }]);
-  sortLabel.classList.remove('hidden');
   renderTrackRows(artistTracks.filter(t => normalizeGroupName(t.album, t.metadataLoaded ? 'アルバム未設定' : '曲情報未解析') === albumName));
 }
 function renderAlbumView() {
-  sortLabel.classList.add('hidden');
   const albumName = viewPath[0] || null;
   if (!albumName) {
     setBreadcrumb([]); const groups = new Map();
@@ -471,11 +468,11 @@ function renderAlbumView() {
     return;
   }
   setBreadcrumb([{ label:'アルバム', onClick:() => { viewPath = []; renderLibrary(); } }, { label:albumName, onClick:() => {} }]);
-  sortLabel.classList.remove('hidden');
   renderTrackRows(tracks.filter(t => normalizeGroupName(t.album, t.metadataLoaded ? 'アルバム未設定' : '曲情報未解析') === albumName));
 }
 function renderLibrary() {
   trackCount.textContent = `${tracks.length}曲`;
+  updateLibrarySummary();
   trackList.replaceChildren();
   analyzeMetadataButton.disabled = !tracks.some(t => t.handle && !t.metadataLoaded);
   if (!tracks.length) { setBreadcrumb([]); const empty = document.createElement('div'); empty.className = 'empty-list'; empty.textContent = 'MP3が見つかりません'; trackList.append(empty); sortedTracks = []; return; }
@@ -500,6 +497,8 @@ function getSettings(file = null) {
   try {
     const newKey = trackKeyFor(currentTrack, file);
     let raw = localStorage.getItem(storageKey(newKey));
+    if (!raw) raw = localStorage.getItem(`${V5_PREFIX}${newKey}`);
+    if (!raw) raw = localStorage.getItem(`${V4_PREFIX}${newKey}`);
     if (!raw) raw = localStorage.getItem(v3StorageKey(newKey));
     if (!raw && file) raw = localStorage.getItem(legacyStorageKey(file));
     if (!raw) return base;
@@ -563,15 +562,6 @@ async function permissionStateForTrack(t) {
   try { return await target.queryPermission({ mode:'read' }); }
   catch (_) { return 'prompt'; }
 }
-function showTrackPermissionPrompt(t, autoplay = false) {
-  pendingTrackRequest = { track:t, autoplay };
-  permissionModalText.textContent = `「${t.title || t.name || 'この曲'}」を開くには、登録済みの音楽フォルダへのアクセスを許可してください。`;
-  permissionModal.classList.remove('hidden');
-}
-function hideTrackPermissionPrompt() {
-  permissionModal.classList.add('hidden');
-  pendingTrackRequest = null;
-}
 async function ensureTrackFile(t) {
   if (t.file) return t.file;
   if (!t.handle) throw new Error('この曲のファイルハンドルがありません。');
@@ -581,15 +571,23 @@ async function ensureTrackFile(t) {
     throw err;
   }
 }
-async function selectTrack(t, autoplay = false) {
+async function selectTrack(t, autoplay = false, userInitiated = false) {
   try {
     if (t.handle) {
-      const permission = await permissionStateForTrack(t);
+      const target = directoryHandle || t.handle;
+      let permission = 'prompt';
+      if (userInitiated && target?.requestPermission) {
+        // 曲タップのユーザー操作から直接ブラウザ標準の権限確認へつなぐ。
+        // 既に許可済みなら通常はそのまま 'granted' が返り、追加の自前ダイアログは出さない。
+        try { permission = await target.requestPermission({ mode:'read' }); } catch (err) { console.warn(err); }
+      } else {
+        permission = await permissionStateForTrack(t);
+      }
       if (permission !== 'granted') {
         permissionBox.classList.remove('hidden');
-        showTrackPermissionPrompt(t, autoplay);
         return;
       }
+      permissionBox.classList.add('hidden');
     }
     const file = await ensureTrackFile(t);
     if (objectUrl) URL.revokeObjectURL(objectUrl);
@@ -619,16 +617,25 @@ function adjacentTrack(delta, wrap = true) {
   let next = idx + delta;
   if (wrap) next = (next + source.length) % source.length;
   if (next < 0 || next >= source.length) return;
-  selectTrack(source[next], true);
+  selectTrack(source[next], true, false);
 }
 
 function closeMenus(except = null) {
   if (except !== 'app') { appMenu.classList.add('hidden'); appMenuButton.setAttribute('aria-expanded','false'); }
   if (except !== 'loop') { loopMenu.classList.add('hidden'); loopMenuButton.setAttribute('aria-expanded','false'); }
 }
-function setDrawerExpanded(expanded) {
+function drawerHeights() {
+  return { collapsed:104, expanded:Math.min(window.innerHeight * 0.88, 760) };
+}
+function applyDrawerHeight(height, animate = true) {
+  playerDrawer.classList.toggle('dragging', !animate);
+  playerDrawer.style.height = `${Math.round(height)}px`;
+}
+function setDrawerExpanded(expanded, animate = true) {
+  const h = drawerHeights();
   playerDrawer.classList.toggle('expanded', expanded);
   playerDrawer.classList.toggle('collapsed', !expanded);
+  applyDrawerHeight(expanded ? h.expanded : h.collapsed, animate);
   drawerHandle.setAttribute('aria-expanded', String(expanded));
   drawerHandle.setAttribute('aria-label', expanded ? '再生パネルを閉じる' : '再生パネルを開く');
   drawerChevron.textContent = expanded ? '⌄' : '⌃';
@@ -639,39 +646,36 @@ appMenuButton.addEventListener('click', e => { e.stopPropagation(); const open =
 loopMenuButton.addEventListener('click', e => { e.stopPropagation(); const open = loopMenu.classList.contains('hidden'); closeMenus(open ? 'loop' : null); loopMenu.classList.toggle('hidden', !open); loopMenuButton.setAttribute('aria-expanded', String(open)); });
 document.addEventListener('click', e => { if (!appMenu.contains(e.target) && !loopMenu.contains(e.target)) closeMenus(); });
 
-drawerHandle.addEventListener('click', toggleDrawer);
-drawerHandle.addEventListener('touchstart', e => { drawerTouchStartY = e.touches?.[0]?.clientY ?? null; }, { passive:true });
-drawerHandle.addEventListener('touchend', e => {
-  if (drawerTouchStartY == null) return;
-  const endY = e.changedTouches?.[0]?.clientY ?? drawerTouchStartY;
-  const delta = endY - drawerTouchStartY;
-  drawerTouchStartY = null;
-  if (delta < -45) setDrawerExpanded(true);
-  else if (delta > 45) setDrawerExpanded(false);
-}, { passive:true });
+drawerHandle.addEventListener('click', () => { if (suppressDrawerClick) { suppressDrawerClick = false; return; } toggleDrawer(); });
+drawerHandle.addEventListener('pointerdown', e => {
+  const h = drawerHeights();
+  const current = playerDrawer.getBoundingClientRect().height;
+  drawerDrag = { id:e.pointerId, startY:e.clientY, startHeight:current, moved:false, min:h.collapsed, max:h.expanded };
+  drawerHandle.setPointerCapture?.(e.pointerId);
+  playerDrawer.classList.add('dragging');
+});
+drawerHandle.addEventListener('pointermove', e => {
+  if (!drawerDrag || drawerDrag.id !== e.pointerId) return;
+  const delta = drawerDrag.startY - e.clientY;
+  if (Math.abs(delta) > 3) drawerDrag.moved = true;
+  const next = Math.min(drawerDrag.max, Math.max(drawerDrag.min, drawerDrag.startHeight + delta));
+  applyDrawerHeight(next, false);
+});
+function finishDrawerDrag(e) {
+  if (!drawerDrag || drawerDrag.id !== e.pointerId) return;
+  const drag = drawerDrag; drawerDrag = null;
+  suppressDrawerClick = Boolean(drag.moved);
+  playerDrawer.classList.remove('dragging');
+  const current = playerDrawer.getBoundingClientRect().height;
+  const threshold = drag.min + (drag.max - drag.min) * 0.42;
+  setDrawerExpanded(current >= threshold, true);
+}
+drawerHandle.addEventListener('pointerup', finishDrawerDrag);
+drawerHandle.addEventListener('pointercancel', finishDrawerDrag);
 
 showAppInfo.addEventListener('click', () => { closeMenus(); appInfoModal.classList.remove('hidden'); });
 closeAppInfo.addEventListener('click', () => appInfoModal.classList.add('hidden'));
 appInfoModal.addEventListener('click', e => { if (e.target === appInfoModal) appInfoModal.classList.add('hidden'); });
-cancelPermissionModal.addEventListener('click', hideTrackPermissionPrompt);
-permissionModal.addEventListener('click', e => { if (e.target === permissionModal) hideTrackPermissionPrompt(); });
-grantTrackPermission.addEventListener('click', async () => {
-  const pending = pendingTrackRequest;
-  if (!pending) return hideTrackPermissionPrompt();
-  const target = directoryHandle || pending.track.handle;
-  if (!target?.requestPermission) return;
-  try {
-    const state = await target.requestPermission({ mode:'read' });
-    if (state === 'granted') {
-      permissionBox.classList.add('hidden');
-      refreshFolder.disabled = false;
-      permissionModal.classList.add('hidden');
-      pendingTrackRequest = null;
-      await selectTrack(pending.track, pending.autoplay);
-    }
-  } catch (err) { console.error(err); }
-});
-
 chooseFolder.addEventListener('click', async () => {
   closeMenus(); if (!('showDirectoryPicker' in window)) return;
   try {
@@ -689,21 +693,15 @@ grantFolderPermission.addEventListener('click', async () => {
     if (state === 'granted') {
       permissionBox.classList.add('hidden');
       refreshFolder.disabled = false;
-      if (pendingTrackRequest) {
-        const pending = pendingTrackRequest;
-        permissionModal.classList.add('hidden');
-        pendingTrackRequest = null;
-        await selectTrack(pending.track, pending.autoplay);
-      }
     }
   } catch (err) { console.error(err); }
 });
 fileInput.addEventListener('change', async () => {
   closeMenus(); metadataRunId++;
   const files = Array.from(fileInput.files || []).filter(f => isMp3Name(f.name) || f.type === 'audio/mpeg'); if (!files.length) return;
-  directoryHandle = null; permissionBox.classList.add('hidden'); folderStatus.textContent = `一時選択: ${files.length}曲`;
+  directoryHandle = null; cachedFolderName = '一時選択'; permissionBox.classList.add('hidden');
   tracks = files.map(file => ({ handle:null, file, path:file.name, name:file.name, size:file.size, lastModified:file.lastModified, title:file.name.replace(/\.mp3$/i,''), artist:'', album:'', metadataLoaded:false, artworkBlob:null, artworkScanned:false }));
-  viewPath = []; renderLibrary(); setMetadataStatus('一時選択した曲は、再生時に曲情報を読み込みます。');
+  viewPath = []; updateLibrarySummary('一時選択'); renderLibrary(); setMetadataStatus('一時選択した曲は、再生時に曲情報を読み込みます。');
   if (tracks.length === 1) selectTrack(tracks[0], false);
 });
 sortSelect.addEventListener('change', renderLibrary);
@@ -749,8 +747,7 @@ async function restoreDirectoryAndCache() {
     const state = await directoryHandle.queryPermission({ mode:'read' });
     if (state === 'granted') {
       permissionBox.classList.add('hidden');
-      if (!tracks.length) folderStatus.textContent = `登録フォルダ: ${directoryHandle.name} ・ 右上メニューから更新してください`;
-      else folderStatus.textContent = `キャッシュ表示: ${directoryHandle.name} ・ ${tracks.length}曲`;
+      cachedFolderName = directoryHandle.name; updateLibrarySummary(directoryHandle.name);
     } else permissionBox.classList.remove('hidden');
   } catch (err) { console.warn(err); permissionBox.classList.remove('hidden'); }
 }

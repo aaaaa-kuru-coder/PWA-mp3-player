@@ -9,7 +9,7 @@
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" href="./icons/icon-192.png" />
   <link rel="stylesheet" href="./style.css" />
-  <title>Local MP3 Player</title>
+  <title>Local MP3 Player v6</title>
 </head>
 <body>
   <main class="app">
@@ -40,12 +40,20 @@
         <div id="loadingText" class="loading-text">音楽ライブラリを読み込み中…</div>
       </div>
 
-      <div class="library-head">
-        <div>
-          <div class="setting-title">音楽ライブラリ</div>
-          <div id="folderStatus" class="setting-note">右上の ☰ から音楽フォルダを登録してください</div>
+      <div class="list-toolbar library-summary-row">
+        <div class="library-summary-wrap">
+          <div id="folderStatus" class="library-summary">音楽ライブラリ：未登録（0曲）</div>
           <div id="metadataStatus" class="metadata-status hidden"></div>
         </div>
+        <label id="sortLabel" class="sort-label"><span>並び順：</span>
+          <select id="sortSelect">
+            <option value="filename">ファイル名</option>
+            <option value="title">曲名</option>
+            <option value="artist">アーティスト</option>
+            <option value="album">アルバム</option>
+          </select>
+        </label>
+        <span id="trackCount" class="track-count hidden">0曲</span>
       </div>
 
       <div id="permissionBox" class="permission-box hidden">
@@ -63,17 +71,6 @@
 
       <div id="breadcrumb" class="breadcrumb hidden" aria-label="現在位置"></div>
 
-      <div class="list-toolbar">
-        <div id="trackCount" class="track-count">0曲</div>
-        <label id="sortLabel" class="sort-label">並び順
-          <select id="sortSelect">
-            <option value="filename">ファイル名</option>
-            <option value="title">曲名</option>
-            <option value="artist">アーティスト</option>
-            <option value="album">アルバム</option>
-          </select>
-        </label>
-      </div>
       <div id="trackList" class="track-list">
         <div class="empty-list">まだ曲がありません</div>
       </div>
@@ -174,17 +171,6 @@
       </div>
     </div>
   </section>
-
-  <div id="permissionModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="permissionModalTitle">
-    <div class="modal-card">
-      <div id="permissionModalTitle" class="modal-title">フォルダへのアクセスが必要です</div>
-      <p id="permissionModalText">この曲を開くには、登録済みの音楽フォルダへのアクセスを許可してください。</p>
-      <div class="modal-actions">
-        <button id="cancelPermissionModal" class="modal-secondary" type="button">キャンセル</button>
-        <button id="grantTrackPermission" class="modal-primary" type="button">アクセスを許可して再生</button>
-      </div>
-    </div>
-  </div>
 
   <div id="appInfoModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="appInfoTitle">
     <div class="modal-card info-modal-card">
