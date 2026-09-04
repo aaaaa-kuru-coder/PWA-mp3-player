@@ -1,12 +1,12 @@
 {
-  "name": "Local MP3 Player v6",
-  "short_name": "MP3 Player",
-  "description": "キャッシュ式ライブラリと遅延読み込み、高速キャッシュと滑らかな収納式プレイヤーUIを備えた端末内MP3向けローカルPWAプレイヤー",
+  "name": "Local MP3 Player v7",
+  "short_name": "Local MP3 Player",
+  "description": "3領域固定レイアウト、単一スクロール、キャッシュ式ライブラリ、遅延読み込み、暖色ナイトテーマを備えた端末内MP3向けPWAプレイヤー",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#0b1020",
-  "theme_color": "#111827",
+  "background_color": "#120807",
+  "theme_color": "#5a1f12",
   "icons": [
     {
       "src": "./icons/icon-192.png",

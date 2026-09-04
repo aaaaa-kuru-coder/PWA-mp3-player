@@ -61,6 +61,10 @@ const drawerChevron = $('drawerChevron');
 const showAppInfo = $('showAppInfo');
 const appInfoModal = $('appInfoModal');
 const closeAppInfo = $('closeAppInfo');
+const appShell = $('appShell');
+const topZone = $('topZone');
+const miniPlayer = $('miniPlayer');
+const rowSizeSelect = $('rowSizeSelect');
 
 const GAIN_MIN = 1 / 3;
 const GAIN_MAX = 1.5;
@@ -69,7 +73,8 @@ const HANDLE_STORE = 'handles';
 const LIBRARY_STORE = 'library';
 const DIRECTORY_KEY = 'music-directory';
 const LIBRARY_KEY = 'library-cache-v4';
-const SETTINGS_PREFIX = 'local-mp3-player:v6:';
+const SETTINGS_PREFIX = 'local-mp3-player:v7:';
+const V6_PREFIX = 'local-mp3-player:v6:';
 const V5_PREFIX = 'local-mp3-player:v5:';
 const V4_PREFIX = 'local-mp3-player:v4:';
 const V3_PREFIX = 'local-mp3-player:v3:';
@@ -497,6 +502,7 @@ function getSettings(file = null) {
   try {
     const newKey = trackKeyFor(currentTrack, file);
     let raw = localStorage.getItem(storageKey(newKey));
+    if (!raw) raw = localStorage.getItem(`${V6_PREFIX}${newKey}`);
     if (!raw) raw = localStorage.getItem(`${V5_PREFIX}${newKey}`);
     if (!raw) raw = localStorage.getItem(`${V4_PREFIX}${newKey}`);
     if (!raw) raw = localStorage.getItem(v3StorageKey(newKey));
@@ -625,11 +631,16 @@ function closeMenus(except = null) {
   if (except !== 'loop') { loopMenu.classList.add('hidden'); loopMenuButton.setAttribute('aria-expanded','false'); }
 }
 function drawerHeights() {
-  return { collapsed:104, expanded:Math.min(window.innerHeight * 0.88, 760) };
+  const top = topZone?.getBoundingClientRect().height || Math.max(104, window.innerHeight * 0.12);
+  const collapsed = Math.max(62, Math.min(78, window.innerHeight * 0.08));
+  const expanded = Math.max(collapsed, window.innerHeight - top);
+  return { collapsed, expanded };
 }
 function applyDrawerHeight(height, animate = true) {
-  playerDrawer.classList.toggle('dragging', !animate);
-  playerDrawer.style.height = `${Math.round(height)}px`;
+  const h = drawerHeights();
+  const clamped = Math.min(h.expanded, Math.max(h.collapsed, Number(height) || h.collapsed));
+  appShell.classList.toggle('drawer-dragging', !animate);
+  appShell.style.setProperty('--player-h', `${Math.round(clamped)}px`);
 }
 function setDrawerExpanded(expanded, animate = true) {
   const h = drawerHeights();
@@ -639,39 +650,55 @@ function setDrawerExpanded(expanded, animate = true) {
   drawerHandle.setAttribute('aria-expanded', String(expanded));
   drawerHandle.setAttribute('aria-label', expanded ? '再生パネルを閉じる' : '再生パネルを開く');
   drawerChevron.textContent = expanded ? '⌄' : '⌃';
-  document.body.classList.toggle('drawer-open', expanded);
+  miniPlayer.setAttribute('aria-label', expanded ? '再生パネルを閉じる' : '再生パネルを開く');
 }
 function toggleDrawer() { setDrawerExpanded(!playerDrawer.classList.contains('expanded')); }
 appMenuButton.addEventListener('click', e => { e.stopPropagation(); const open = appMenu.classList.contains('hidden'); closeMenus(open ? 'app' : null); appMenu.classList.toggle('hidden', !open); appMenuButton.setAttribute('aria-expanded', String(open)); });
 loopMenuButton.addEventListener('click', e => { e.stopPropagation(); const open = loopMenu.classList.contains('hidden'); closeMenus(open ? 'loop' : null); loopMenu.classList.toggle('hidden', !open); loopMenuButton.setAttribute('aria-expanded', String(open)); });
 document.addEventListener('click', e => { if (!appMenu.contains(e.target) && !loopMenu.contains(e.target)) closeMenus(); });
 
-drawerHandle.addEventListener('click', () => { if (suppressDrawerClick) { suppressDrawerClick = false; return; } toggleDrawer(); });
-drawerHandle.addEventListener('pointerdown', e => {
+function canStartDrawerGesture(target) {
+  return !target.closest('button,input,select,label,a') || target === drawerHandle || drawerHandle.contains(target);
+}
+function startDrawerDrag(e) {
+  if (!canStartDrawerGesture(e.target)) return;
   const h = drawerHeights();
   const current = playerDrawer.getBoundingClientRect().height;
-  drawerDrag = { id:e.pointerId, startY:e.clientY, startHeight:current, moved:false, min:h.collapsed, max:h.expanded };
-  drawerHandle.setPointerCapture?.(e.pointerId);
-  playerDrawer.classList.add('dragging');
-});
-drawerHandle.addEventListener('pointermove', e => {
+  drawerDrag = { id:e.pointerId, startY:e.clientY, startHeight:current, moved:false, min:h.collapsed, max:h.expanded, host:e.currentTarget };
+  e.currentTarget.setPointerCapture?.(e.pointerId);
+  appShell.classList.add('drawer-dragging');
+}
+function moveDrawerDrag(e) {
   if (!drawerDrag || drawerDrag.id !== e.pointerId) return;
   const delta = drawerDrag.startY - e.clientY;
-  if (Math.abs(delta) > 3) drawerDrag.moved = true;
+  if (Math.abs(delta) > 4) drawerDrag.moved = true;
   const next = Math.min(drawerDrag.max, Math.max(drawerDrag.min, drawerDrag.startHeight + delta));
   applyDrawerHeight(next, false);
-});
+  if (drawerDrag.moved) e.preventDefault();
+}
 function finishDrawerDrag(e) {
   if (!drawerDrag || drawerDrag.id !== e.pointerId) return;
   const drag = drawerDrag; drawerDrag = null;
   suppressDrawerClick = Boolean(drag.moved);
-  playerDrawer.classList.remove('dragging');
+  appShell.classList.remove('drawer-dragging');
   const current = playerDrawer.getBoundingClientRect().height;
-  const threshold = drag.min + (drag.max - drag.min) * 0.42;
+  const threshold = drag.min + (drag.max - drag.min) * 0.34;
   setDrawerExpanded(current >= threshold, true);
 }
-drawerHandle.addEventListener('pointerup', finishDrawerDrag);
-drawerHandle.addEventListener('pointercancel', finishDrawerDrag);
+[drawerHandle, miniPlayer].forEach(el => {
+  el.addEventListener('pointerdown', startDrawerDrag);
+  el.addEventListener('pointermove', moveDrawerDrag);
+  el.addEventListener('pointerup', finishDrawerDrag);
+  el.addEventListener('pointercancel', finishDrawerDrag);
+});
+drawerHandle.addEventListener('click', () => { if (suppressDrawerClick) { suppressDrawerClick = false; return; } toggleDrawer(); });
+miniPlayer.addEventListener('click', e => {
+  if (e.target.closest('#playPause')) return;
+  if (suppressDrawerClick) { suppressDrawerClick = false; return; }
+  toggleDrawer();
+});
+miniPlayer.addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && !e.target.closest('button')) { e.preventDefault(); toggleDrawer(); } });
+window.addEventListener('resize', () => setDrawerExpanded(playerDrawer.classList.contains('expanded'), false));
 
 showAppInfo.addEventListener('click', () => { closeMenus(); appInfoModal.classList.remove('hidden'); });
 closeAppInfo.addEventListener('click', () => appInfoModal.classList.add('hidden'));
@@ -704,6 +731,16 @@ fileInput.addEventListener('change', async () => {
   viewPath = []; updateLibrarySummary('一時選択'); renderLibrary(); setMetadataStatus('一時選択した曲は、再生時に曲情報を読み込みます。');
   if (tracks.length === 1) selectTrack(tracks[0], false);
 });
+const ROW_SIZE_KEY = 'local-mp3-player:ui:row-size';
+function applyRowSize(value) {
+  const valid = ['compact','normal','large'].includes(value) ? value : 'normal';
+  document.body.dataset.rowSize = valid;
+  rowSizeSelect.value = valid;
+  localStorage.setItem(ROW_SIZE_KEY, valid);
+}
+applyRowSize(localStorage.getItem(ROW_SIZE_KEY) || 'normal');
+rowSizeSelect.addEventListener('change', () => applyRowSize(rowSizeSelect.value));
+
 sortSelect.addEventListener('change', renderLibrary);
 viewTabs.forEach(btn => btn.addEventListener('click', () => { viewMode = btn.dataset.view; viewPath = []; viewTabs.forEach(x => x.classList.toggle('active', x === btn)); renderLibrary(); }));
 

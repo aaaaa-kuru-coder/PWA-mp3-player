@@ -3,22 +3,19 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <meta name="theme-color" content="#111827" />
-  <meta name="color-scheme" content="dark light" />
+  <meta name="theme-color" content="#5a1f12" />
+  <meta name="color-scheme" content="dark" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none';" />
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" href="./icons/icon-192.png" />
   <link rel="stylesheet" href="./style.css" />
-  <title>Local MP3 Player v6</title>
+  <title>Local MP3 Player v7</title>
 </head>
 <body>
-  <main class="app">
-    <header>
-      <div>
-        <p class="eyebrow">LOCAL-ONLY PLAYER</p>
-        <h1>MP3 Player</h1>
-      </div>
-      <div class="header-actions">
+  <main id="appShell" class="app-shell">
+    <section id="topZone" class="top-zone" aria-label="ライブラリ操作">
+      <header class="title-row">
+        <h1>Local MP3 Player</h1>
         <div class="menu-wrap">
           <button id="appMenuButton" class="menu-button" type="button" aria-label="アプリメニュー" aria-expanded="false">☰</button>
           <div id="appMenu" class="popup-menu hidden" role="menu">
@@ -28,17 +25,18 @@
             <label class="menu-file-item" for="fileInput">🎵 MP3を一時選択</label>
             <input id="fileInput" type="file" accept="audio/mpeg,audio/mp3,.mp3" multiple />
             <div class="menu-divider"></div>
+            <label class="menu-setting-item" for="rowSizeSelect">↕ 曲一覧の大きさ
+              <select id="rowSizeSelect" aria-label="曲一覧の行サイズ">
+                <option value="compact">小さめ</option>
+                <option value="normal" selected>標準</option>
+                <option value="large">大きめ</option>
+              </select>
+            </label>
+            <div class="menu-divider"></div>
             <button id="showAppInfo" type="button" role="menuitem">ℹ️ アプリ仕様・プライバシー</button>
           </div>
         </div>
-      </div>
-    </header>
-
-    <section class="card library-card">
-      <div id="loadingOverlay" class="loading-overlay hidden" aria-live="polite" aria-busy="true">
-        <div class="spinner" aria-hidden="true"></div>
-        <div id="loadingText" class="loading-text">音楽ライブラリを読み込み中…</div>
-      </div>
+      </header>
 
       <div class="list-toolbar library-summary-row">
         <div class="library-summary-wrap">
@@ -56,12 +54,6 @@
         <span id="trackCount" class="track-count hidden">0曲</span>
       </div>
 
-      <div id="permissionBox" class="permission-box hidden">
-        <span>登録フォルダへのアクセス許可が必要です。</span>
-        <button id="grantFolderPermission" type="button">アクセスを許可</button>
-      </div>
-      <div id="directoryUnsupported" class="warning hidden">このブラウザではフォルダ登録APIを利用できません。右上メニューの「MP3を一時選択」から複数曲を選べます。</div>
-
       <div class="view-tabs" role="tablist" aria-label="ライブラリ表示モード">
         <button class="view-tab active" type="button" data-view="all"><span>🎵</span><span>全曲</span></button>
         <button class="view-tab" type="button" data-view="folder"><span>📁</span><span>フォルダ</span></button>
@@ -70,107 +62,118 @@
       </div>
 
       <div id="breadcrumb" class="breadcrumb hidden" aria-label="現在位置"></div>
+    </section>
 
+    <section id="listZone" class="list-zone" aria-label="楽曲一覧">
+      <div id="loadingOverlay" class="loading-overlay hidden" aria-live="polite" aria-busy="true">
+        <div class="spinner" aria-hidden="true"></div>
+        <div id="loadingText" class="loading-text">音楽ライブラリを読み込み中…</div>
+      </div>
+      <div id="permissionBox" class="permission-box hidden">
+        <span>登録フォルダへのアクセス許可が必要です。</span>
+        <button id="grantFolderPermission" type="button">アクセスを許可</button>
+      </div>
+      <div id="directoryUnsupported" class="warning hidden">このブラウザではフォルダ登録APIを利用できません。右上メニューの「MP3を一時選択」から複数曲を選べます。</div>
       <div id="trackList" class="track-list">
         <div class="empty-list">まだ曲がありません</div>
       </div>
     </section>
-  </main>
 
-  <section id="playerDrawer" class="player-drawer collapsed" aria-label="再生パネル">
-    <button id="drawerHandle" class="drawer-handle" type="button" aria-label="再生パネルを開く" aria-expanded="false">
-      <span class="drawer-grip"></span>
-      <span id="drawerChevron" class="drawer-chevron">⌃</span>
-    </button>
+    <section id="playerDrawer" class="player-drawer collapsed" aria-label="再生パネル">
+      <button id="drawerHandle" class="drawer-handle" type="button" aria-label="再生パネルを開く" aria-expanded="false">
+        <span class="drawer-grip"></span>
+        <span id="drawerChevron" class="drawer-chevron">⌃</span>
+      </button>
 
-    <div class="mini-player">
-      <div id="artworkWrap" class="artwork-wrap placeholder">
-        <img id="artwork" alt="アルバム画像" hidden />
-        <div id="artworkPlaceholder" class="artwork-placeholder">♪</div>
-      </div>
-      <div class="track-info mini-track-info">
-        <div id="trackName" class="track-name">ファイル未選択</div>
-        <div id="trackArtist" class="track-artist">—</div>
-      </div>
-      <button id="playPause" class="mini-play" type="button" disabled aria-label="再生・一時停止">▶</button>
-    </div>
-
-    <div id="drawerExpanded" class="drawer-expanded">
-      <audio id="audio" preload="metadata"></audio>
-      <div id="trackMeta" class="track-meta">ライブラリから曲を選択してください</div>
-
-      <div class="time-row">
-        <span id="currentTime">0:00</span>
-        <input id="seek" class="seek" type="range" min="0" max="1000" value="0" step="1" aria-label="再生位置" />
-        <span id="duration">0:00</span>
+      <div id="miniPlayer" class="mini-player" tabindex="0" role="button" aria-label="再生パネルを開く">
+        <div id="artworkWrap" class="artwork-wrap placeholder">
+          <img id="artwork" alt="アルバム画像" hidden />
+          <div id="artworkPlaceholder" class="artwork-placeholder">♪</div>
+        </div>
+        <div class="track-info mini-track-info">
+          <div id="trackName" class="track-name">ファイル未選択</div>
+          <div id="trackArtist" class="track-artist">—</div>
+        </div>
+        <button id="playPause" class="mini-play" type="button" disabled aria-label="再生・一時停止">▶</button>
       </div>
 
-      <div class="transport-wrap">
-        <div class="transport">
-          <button id="prevTrack" class="secondary" type="button" aria-label="前の曲">⏮</button>
-          <button id="back10" class="secondary" type="button" aria-label="10秒戻る">−10s</button>
-          <button id="forward10" class="secondary" type="button" aria-label="10秒進む">+10s</button>
-          <button id="nextTrack" class="secondary" type="button" aria-label="次の曲">⏭</button>
-          <div class="loop-menu-wrap">
-            <button id="loopMenuButton" class="more-button" type="button" aria-label="ループモード" aria-expanded="false">…</button>
-            <div id="loopMenu" class="popup-menu loop-menu hidden" role="menu">
-              <div class="popup-title">ループモード</div>
-              <label><input type="radio" name="loopMode" value="one" checked /> 🔂 1曲を繰り返す</label>
-              <label><input type="radio" name="loopMode" value="list" /> 🔁 現在の一覧を繰り返す</label>
-              <label><input type="radio" name="loopMode" value="off" /> ➡️ ループしない</label>
+      <div id="drawerExpanded" class="drawer-expanded">
+        <audio id="audio" preload="metadata"></audio>
+        <div id="trackMeta" class="track-meta">ライブラリから曲を選択してください</div>
+
+        <div class="time-row">
+          <span id="currentTime">0:00</span>
+          <input id="seek" class="seek" type="range" min="0" max="1000" value="0" step="1" aria-label="再生位置" />
+          <span id="duration">0:00</span>
+        </div>
+
+        <div class="transport-wrap">
+          <div class="transport">
+            <button id="prevTrack" class="secondary" type="button" aria-label="前の曲">⏮</button>
+            <button id="back10" class="secondary" type="button" aria-label="10秒戻る">−10s</button>
+            <button id="forward10" class="secondary" type="button" aria-label="10秒進む">+10s</button>
+            <button id="nextTrack" class="secondary" type="button" aria-label="次の曲">⏭</button>
+            <div class="loop-menu-wrap">
+              <button id="loopMenuButton" class="more-button" type="button" aria-label="ループモード" aria-expanded="false">…</button>
+              <div id="loopMenu" class="popup-menu loop-menu hidden" role="menu">
+                <div class="popup-title">ループモード</div>
+                <label><input type="radio" name="loopMode" value="one" checked /> 🔂 1曲を繰り返す</label>
+                <label><input type="radio" name="loopMode" value="list" /> 🔁 現在の一覧を繰り返す</label>
+                <label><input type="radio" name="loopMode" value="off" /> ➡️ ループしない</label>
+              </div>
             </div>
           </div>
+          <div id="loopModeLabel" class="loop-mode-label">🔂 1曲ループ</div>
         </div>
-        <div id="loopModeLabel" class="loop-mode-label">🔂 1曲ループ</div>
-      </div>
 
-      <div class="gain-block compact-top">
-        <div class="gain-head">
-          <div>
-            <div class="setting-title">プレイヤー音量補正</div>
-            <div class="setting-note">スマホ本体音量とは別の倍率・曲ごとに記憶</div>
+        <div class="gain-block compact-top">
+          <div class="gain-head">
+            <div>
+              <div class="setting-title">プレイヤー音量補正</div>
+              <div class="setting-note">スマホ本体音量とは別の倍率・曲ごとに記憶</div>
+            </div>
+            <output id="gainValue">1.00×</output>
           </div>
-          <output id="gainValue">1.00×</output>
+          <input id="gain" class="gain" type="range" min="0" max="1000" value="730" step="1" aria-label="音量倍率" />
+          <div class="gain-scale"><span>1/3×</span><span>1.0×</span><span>1.5×</span></div>
+          <div id="gainDb" class="gain-db">0.00 dB</div>
         </div>
-        <input id="gain" class="gain" type="range" min="0" max="1000" value="730" step="1" aria-label="音量倍率" />
-        <div class="gain-scale"><span>1/3×</span><span>1.0×</span><span>1.5×</span></div>
-        <div id="gainDb" class="gain-db">0.00 dB</div>
-      </div>
 
-      <div class="compressor-block">
-        <div class="setting-row compressor-toggle-row">
-          <div>
-            <div class="setting-title">コンプレッサー</div>
-            <div class="setting-note">大きい部分を圧縮して音量差を抑えます</div>
+        <div class="compressor-block">
+          <div class="setting-row compressor-toggle-row">
+            <div>
+              <div class="setting-title">コンプレッサー</div>
+              <div class="setting-note">大きい部分を圧縮して音量差を抑えます</div>
+            </div>
+            <label class="switch">
+              <input id="compressorToggle" type="checkbox" />
+              <span class="slider"></span>
+            </label>
           </div>
-          <label class="switch">
-            <input id="compressorToggle" type="checkbox" />
-            <span class="slider"></span>
-          </label>
-        </div>
-        <div id="compressorControls" class="compressor-controls disabled-panel">
-          <label>しきい値 <output id="thresholdValue">-35 dB</output>
-            <input id="threshold" type="range" min="-60" max="0" value="-35" step="1" />
-          </label>
-          <label>比率 <output id="ratioValue">2.5 : 1</output>
-            <input id="ratio" type="range" min="1" max="12" value="2.5" step="0.1" />
-          </label>
-          <label>ニー <output id="kneeValue">20 dB</output>
-            <input id="knee" type="range" min="0" max="40" value="20" step="1" />
-          </label>
-          <label>アタック <output id="attackValue">10 ms</output>
-            <input id="attack" type="range" min="0" max="0.2" value="0.01" step="0.001" />
-          </label>
-          <label>リリース <output id="releaseValue">250 ms</output>
-            <input id="release" type="range" min="0.02" max="1" value="0.25" step="0.01" />
-          </label>
-          <label>出力ゲイン <output id="makeupValue">0.0 dB</output>
-            <input id="makeup" type="range" min="-6" max="12" value="0" step="0.1" />
-          </label>
+          <div id="compressorControls" class="compressor-controls disabled-panel">
+            <label>しきい値 <output id="thresholdValue">-35 dB</output>
+              <input id="threshold" type="range" min="-60" max="0" value="-35" step="1" />
+            </label>
+            <label>比率 <output id="ratioValue">2.5 : 1</output>
+              <input id="ratio" type="range" min="1" max="12" value="2.5" step="0.1" />
+            </label>
+            <label>ニー <output id="kneeValue">20 dB</output>
+              <input id="knee" type="range" min="0" max="40" value="20" step="1" />
+            </label>
+            <label>アタック <output id="attackValue">10 ms</output>
+              <input id="attack" type="range" min="0" max="0.2" value="0.01" step="0.001" />
+            </label>
+            <label>リリース <output id="releaseValue">250 ms</output>
+              <input id="release" type="range" min="0.02" max="1" value="0.25" step="0.01" />
+            </label>
+            <label>出力ゲイン <output id="makeupValue">0.0 dB</output>
+              <input id="makeup" type="range" min="-6" max="12" value="0" step="0.1" />
+            </label>
+          </div>
         </div>
       </div>
-    </div>
-  </section>
+    </section>
+  </main>
 
   <div id="appInfoModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="appInfoTitle">
     <div class="modal-card info-modal-card">
