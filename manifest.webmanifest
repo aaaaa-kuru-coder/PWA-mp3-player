@@ -1,7 +1,7 @@
 {
-  "name": "Local MP3 Player v7",
+  "name": "Local MP3 Player v8",
   "short_name": "Local MP3 Player",
-  "description": "3領域固定レイアウト、単一スクロール、キャッシュ式ライブラリ、遅延読み込み、暖色ナイトテーマを備えた端末内MP3向けPWAプレイヤー",
+  "description": "3領域固定レイアウトと暖色ナイトテーマを維持し、自動Gain・P10–P90自動コンプレッサー解析を追加した端末内MP3向けPWAプレイヤー",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

@@ -55,7 +55,7 @@ h1 { margin:0; font-size:clamp(15px,4.1vw,19px); line-height:1; letter-spacing:-
 .menu-button,.more-button { border:1px solid rgba(251,146,60,.24); background:rgba(62,22,12,.92); color:#fed7aa; display:grid; place-items:center; }
 .menu-button { width:32px; height:30px; border-radius:9px; font-size:18px; }
 .more-button { width:40px; height:40px; border-radius:50%; font-size:23px; line-height:1; }
-.popup-menu { position:absolute; z-index:100; right:0; top:calc(100% + 6px); width:min(310px,calc(100vw - 20px)); padding:7px; border-radius:15px; background:#2a110c; border:1px solid rgba(251,146,60,.27); box-shadow:0 20px 45px rgba(0,0,0,.58); }
+.popup-menu { position:absolute; z-index:100; right:0; top:calc(100% + 6px); width:min(310px,calc(100vw - 20px)); max-height:calc(100dvh - 52px); overflow-y:auto; overscroll-behavior:contain; padding:7px; border-radius:15px; background:#2a110c; border:1px solid rgba(251,146,60,.27); box-shadow:0 20px 45px rgba(0,0,0,.58); }
 .popup-menu button,.menu-file-item,.popup-menu label { width:100%; min-height:42px; border:0; border-radius:10px; background:transparent; color:#ffedd5; padding:9px 11px; text-align:left; display:flex; align-items:center; gap:9px; cursor:pointer; }
 .popup-menu button:hover,.menu-file-item:hover,.popup-menu label:hover { background:rgba(249,115,22,.14); }
 .popup-menu button:disabled { opacity:.38; cursor:default; }
@@ -197,3 +197,13 @@ body[data-row-size="large"] { --row-min:58px; --row-pad:14px; --row-font:16.5px;
   .compressor-controls { grid-template-columns:1fr 1fr; gap:9px 10px; }
   .compressor-controls label { font-size:10px; }
 }
+
+/* v8 auto analysis controls */
+.menu-check-item { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 10px; color:#f2c6b1; font-size:11px; }
+.menu-check-item input { accent-color:#f97316; width:18px; height:18px; }
+.compact-number-setting input { width:64px; min-height:28px; border:1px solid rgba(251,146,60,.22); border-radius:7px; background:#1d0b08; color:#ffedd5; padding:2px 5px; text-align:right; }
+.auto-setting-item select { max-width:128px; }
+.menu-note { padding:6px 10px 9px; color:#ad7964; font-size:9px; line-height:1.5; }
+.analysis-status { margin-top:7px; min-height:16px; color:#fdba74; font-size:10px; line-height:1.4; }
+.analysis-status.success { color:#86efac; }
+.analysis-status.warn { color:#fcd34d; }

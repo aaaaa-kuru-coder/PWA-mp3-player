@@ -9,7 +9,7 @@
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" href="./icons/icon-192.png" />
   <link rel="stylesheet" href="./style.css" />
-  <title>Local MP3 Player v7</title>
+  <title>Local MP3 Player v8</title>
 </head>
 <body>
   <main id="appShell" class="app-shell">
@@ -32,6 +32,26 @@
                 <option value="large">大きめ</option>
               </select>
             </label>
+            <div class="menu-divider"></div>
+            <div class="popup-title">自動音響補正</div>
+            <label class="menu-setting-item auto-setting-item" for="autoGainMode">自動ゲイン
+              <select id="autoGainMode" aria-label="自動ゲインモード">
+                <option value="off">補正なし</option>
+                <option value="rms">平均RMS補正</option>
+                <option value="peak">最大Peak補正</option>
+              </select>
+            </label>
+            <label class="menu-setting-item compact-number-setting" for="autoRmsTarget">RMS目標
+              <span><input id="autoRmsTarget" type="number" min="-36" max="-10" step="1" value="-22" /> dBFS</span>
+            </label>
+            <label class="menu-setting-item compact-number-setting" for="autoPeakTarget">Peak目標
+              <span><input id="autoPeakTarget" type="number" min="-12" max="-0.5" step="0.5" value="-3" /> dBFS</span>
+            </label>
+            <label class="menu-check-item"><span>自動コンプレッサー</span><input id="autoCompressorEnabled" type="checkbox" /></label>
+            <label class="menu-setting-item compact-number-setting" for="autoDynamicRangeTarget">P10–P90目標幅
+              <span><input id="autoDynamicRangeTarget" type="number" min="6" max="30" step="1" value="14" /> dB</span>
+            </label>
+            <div class="menu-note">曲を開くと解析し、推奨値へ約1.5秒かけて既存スライダーを動かします。長尺音声は短時間サンプル解析へ自動切替します。</div>
             <div class="menu-divider"></div>
             <button id="showAppInfo" type="button" role="menuitem">ℹ️ アプリ仕様・プライバシー</button>
           </div>
@@ -134,9 +154,10 @@
             </div>
             <output id="gainValue">1.00×</output>
           </div>
-          <input id="gain" class="gain" type="range" min="0" max="1000" value="730" step="1" aria-label="音量倍率" />
-          <div class="gain-scale"><span>1/3×</span><span>1.0×</span><span>1.5×</span></div>
+          <input id="gain" class="gain" type="range" min="0" max="1000" value="797" step="1" aria-label="音量倍率" />
+          <div class="gain-scale"><span>0.1×</span><span>1.0×</span><span>1.8×</span></div>
           <div id="gainDb" class="gain-db">0.00 dB</div>
+          <div id="analysisStatus" class="analysis-status hidden" aria-live="polite"></div>
         </div>
 
         <div class="compressor-block">
@@ -180,6 +201,7 @@
       <div id="appInfoTitle" class="modal-title">アプリ仕様・プライバシー</div>
       <p>通常起動では前回のライブラリ情報を IndexedDB から表示し、音楽フォルダ全体を毎回走査しません。実フォルダの確認は右上メニューの「ライブラリを更新」で手動実行します。</p>
       <p>MP3本体は再生する曲だけ端末から取得します。ID3の文字情報は未解析曲だけ遅延取得し、ジャケット画像は原則として再生時にだけ読みます。</p>
+      <p>自動ゲイン・自動コンプレッサーを有効にした場合、端末内で音量統計を解析し、推奨値を既存のGain/コンプレッサー操作へ反映します。解析結果は端末内にキャッシュし、長尺音声では負荷を抑えるため短時間サンプル解析へ切り替えます。</p>
       <p>外部API・CDN・広告・アクセス解析・MP3アップロード処理はありません。PWA本体の取得・更新確認としてGitHub Pagesとの通常のWeb通信は発生しますが、ローカルMP3をその通信へ載せる処理はありません。</p>
       <div class="modal-actions single-action">
         <button id="closeAppInfo" class="modal-primary" type="button">閉じる</button>

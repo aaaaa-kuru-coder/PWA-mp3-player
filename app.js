@@ -65,15 +65,24 @@ const appShell = $('appShell');
 const topZone = $('topZone');
 const miniPlayer = $('miniPlayer');
 const rowSizeSelect = $('rowSizeSelect');
+const autoGainMode = $('autoGainMode');
+const autoRmsTarget = $('autoRmsTarget');
+const autoPeakTarget = $('autoPeakTarget');
+const autoCompressorEnabled = $('autoCompressorEnabled');
+const autoDynamicRangeTarget = $('autoDynamicRangeTarget');
+const analysisStatus = $('analysisStatus');
 
-const GAIN_MIN = 1 / 3;
-const GAIN_MAX = 1.5;
+const GAIN_MIN = 0.1;
+const GAIN_MAX = 1.8;
 const DB_NAME = 'local-mp3-player-db-v2';
 const HANDLE_STORE = 'handles';
 const LIBRARY_STORE = 'library';
 const DIRECTORY_KEY = 'music-directory';
 const LIBRARY_KEY = 'library-cache-v4';
-const SETTINGS_PREFIX = 'local-mp3-player:v7:';
+const SETTINGS_PREFIX = 'local-mp3-player:v8:';
+const V7_PREFIX = 'local-mp3-player:v7:';
+const ANALYSIS_PREFIX = 'local-mp3-player:analysis:v8:';
+const AUTO_PREFS_KEY = 'local-mp3-player:auto-prefs:v8';
 const V6_PREFIX = 'local-mp3-player:v6:';
 const V5_PREFIX = 'local-mp3-player:v5:';
 const V4_PREFIX = 'local-mp3-player:v4:';
@@ -98,6 +107,9 @@ let cacheSaveTimer = null;
 let cachedFolderName = '';
 let drawerDrag = null;
 let suppressDrawerClick = false;
+let analysisRunId = 0;
+let analysisTap = null;
+let analysisSink = null;
 
 function setLoading(show, text = '音楽ライブラリを読み込み中…') {
   loadingText.textContent = text;
@@ -502,6 +514,7 @@ function getSettings(file = null) {
   try {
     const newKey = trackKeyFor(currentTrack, file);
     let raw = localStorage.getItem(storageKey(newKey));
+    if (!raw) raw = localStorage.getItem(`${V7_PREFIX}${newKey}`);
     if (!raw) raw = localStorage.getItem(`${V6_PREFIX}${newKey}`);
     if (!raw) raw = localStorage.getItem(`${V5_PREFIX}${newKey}`);
     if (!raw) raw = localStorage.getItem(`${V4_PREFIX}${newKey}`);
@@ -535,7 +548,9 @@ function ensureAudioGraph() {
   const AudioCtx = window.AudioContext || window.webkitAudioContext;
   if (!AudioCtx) throw new Error('Web Audio API非対応です。');
   audioContext = new AudioCtx(); sourceNode = audioContext.createMediaElementSource(audio); gainNode = audioContext.createGain(); compressorNode = audioContext.createDynamicsCompressor(); makeupNode = audioContext.createGain();
-  sourceNode.connect(gainNode); rebuildAudioGraph();
+  analysisTap = audioContext.createAnalyser(); analysisTap.fftSize = 2048; analysisTap.smoothingTimeConstant = 0;
+  analysisSink = audioContext.createGain(); analysisSink.gain.value = 0;
+  sourceNode.connect(gainNode); sourceNode.connect(analysisTap); analysisTap.connect(analysisSink).connect(audioContext.destination); rebuildAudioGraph();
 }
 function rebuildAudioGraph() {
   if (!gainNode) return;
@@ -543,14 +558,252 @@ function rebuildAudioGraph() {
   if (compressorToggle.checked) gainNode.connect(compressorNode).connect(makeupNode).connect(audioContext.destination); else gainNode.connect(audioContext.destination);
 }
 async function resumeAudioContext() { ensureAudioGraph(); if (audioContext.state === 'suspended') await audioContext.resume(); }
-function applyAudioSettings() {
+function updateAudioSettingLabels() {
   const g = sliderToGain(gainSlider.value);
   gainValue.value = `${g.toFixed(2)}×`; gainDb.textContent = `${(20 * Math.log10(g)).toFixed(2)} dB`;
   thresholdValue.value = `${Number(threshold.value).toFixed(0)} dB`; ratioValue.value = `${Number(ratio.value).toFixed(1)} : 1`; kneeValue.value = `${Number(knee.value).toFixed(0)} dB`;
   attackValue.value = `${Math.round(Number(attack.value) * 1000)} ms`; releaseValue.value = `${Math.round(Number(release.value) * 1000)} ms`; makeupValue.value = `${Number(makeup.value).toFixed(1)} dB`;
   compressorControls.classList.toggle('disabled-panel', !compressorToggle.checked);
-  if (gainNode) gainNode.gain.value = g;
-  if (compressorNode) { compressorNode.threshold.value = Number(threshold.value); compressorNode.ratio.value = Number(ratio.value); compressorNode.knee.value = Number(knee.value); compressorNode.attack.value = Number(attack.value); compressorNode.release.value = Number(release.value); makeupNode.gain.value = dbToGain(makeup.value); rebuildAudioGraph(); }
+}
+function rampParam(param, target, seconds) {
+  if (!param || !audioContext) return;
+  const now = audioContext.currentTime;
+  try {
+    param.cancelScheduledValues(now);
+    param.setValueAtTime(param.value, now);
+    if (seconds > 0) param.linearRampToValueAtTime(target, now + seconds);
+    else param.setValueAtTime(target, now);
+  } catch (_) { param.value = target; }
+}
+function applyAudioSettings(rampSeconds = 0) {
+  updateAudioSettingLabels();
+  const g = sliderToGain(gainSlider.value);
+  if (gainNode) rampParam(gainNode.gain, g, rampSeconds);
+  if (compressorNode) {
+    rebuildAudioGraph();
+    rampParam(compressorNode.threshold, Number(threshold.value), rampSeconds);
+    rampParam(compressorNode.ratio, Number(ratio.value), rampSeconds);
+    rampParam(compressorNode.knee, Number(knee.value), rampSeconds);
+    rampParam(compressorNode.attack, Number(attack.value), rampSeconds);
+    rampParam(compressorNode.release, Number(release.value), rampSeconds);
+    rampParam(makeupNode.gain, dbToGain(makeup.value), rampSeconds);
+  }
+}
+
+
+function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, Number(v))); }
+function linToDb(v) { return v > 0 ? 20 * Math.log10(v) : -Infinity; }
+function percentile(sorted, q) {
+  if (!sorted.length) return -Infinity;
+  const pos = (sorted.length - 1) * q;
+  const lo = Math.floor(pos), hi = Math.ceil(pos);
+  if (lo === hi) return sorted[lo];
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
+}
+function setAnalysisStatus(text = '', kind = '') {
+  analysisStatus.textContent = text;
+  analysisStatus.className = 'analysis-status' + (text ? '' : ' hidden') + (kind ? ` ${kind}` : '');
+}
+function getAutoPrefs() {
+  const defaults = { gainMode:'off', rmsTarget:-22, peakTarget:-3, compressor:false, dynamicRange:14 };
+  try { return { ...defaults, ...(JSON.parse(localStorage.getItem(AUTO_PREFS_KEY) || '{}')) }; }
+  catch (_) { return defaults; }
+}
+function readAutoPrefsFromUi() {
+  return {
+    gainMode:autoGainMode.value,
+    rmsTarget:clamp(autoRmsTarget.value, -36, -10),
+    peakTarget:clamp(autoPeakTarget.value, -12, -0.5),
+    compressor:autoCompressorEnabled.checked,
+    dynamicRange:clamp(autoDynamicRangeTarget.value, 6, 30)
+  };
+}
+function syncAutoPrefsUi(prefs = getAutoPrefs()) {
+  autoGainMode.value = ['off','rms','peak'].includes(prefs.gainMode) ? prefs.gainMode : 'off';
+  autoRmsTarget.value = prefs.rmsTarget;
+  autoPeakTarget.value = prefs.peakTarget;
+  autoCompressorEnabled.checked = Boolean(prefs.compressor);
+  autoDynamicRangeTarget.value = prefs.dynamicRange;
+}
+function saveAutoPrefs() { localStorage.setItem(AUTO_PREFS_KEY, JSON.stringify(readAutoPrefsFromUi())); }
+function analysisCacheKey(t, file) { return `${ANALYSIS_PREFIX}${trackKeyFor(t, file)}`; }
+function getCachedAnalysis(t, file) {
+  try { const x = JSON.parse(localStorage.getItem(analysisCacheKey(t,file)) || 'null'); return x?.version === 1 ? x : null; }
+  catch (_) { return null; }
+}
+function saveAnalysis(t, file, result) {
+  try { localStorage.setItem(analysisCacheKey(t,file), JSON.stringify({ version:1, savedAt:Date.now(), ...result })); } catch (_) {}
+}
+function statsFromSamples(samples, windowDb) {
+  if (!samples) return null;
+  const valid = windowDb.filter(Number.isFinite).filter(x => x > -70).sort((a,b) => a-b);
+  return {
+    rmsDb:linToDb(Math.sqrt(samples.sumSq / Math.max(1, samples.count))),
+    peakDb:linToDb(samples.peak),
+    p10:percentile(valid, .10), p25:percentile(valid, .25), p50:percentile(valid, .50), p75:percentile(valid, .75), p90:percentile(valid, .90),
+    validWindows:valid.length
+  };
+}
+function analyzeDecodedBuffer(buffer) {
+  const channels = Array.from({length:buffer.numberOfChannels}, (_,i) => buffer.getChannelData(i));
+  const frameBudget = 550000;
+  const stride = Math.max(1, Math.ceil(buffer.length / frameBudget));
+  const windowFrames = Math.max(1, Math.round(buffer.sampleRate * 0.20));
+  const windows = [];
+  let winSum = 0, winCount = 0, currentWin = 0;
+  let sumSq = 0, count = 0, peak = 0;
+  for (let i = 0; i < buffer.length; i += stride) {
+    let sq = 0;
+    for (const ch of channels) { const v = ch[i] || 0; const a = Math.abs(v); if (a > peak) peak = a; sq += v*v; }
+    sq /= channels.length;
+    sumSq += sq; count++;
+    const w = Math.floor(i / windowFrames);
+    if (w !== currentWin && winCount) { windows.push(linToDb(Math.sqrt(winSum / winCount))); winSum = 0; winCount = 0; currentWin = w; }
+    winSum += sq; winCount++;
+  }
+  if (winCount) windows.push(linToDb(Math.sqrt(winSum / winCount)));
+  return statsFromSamples({sumSq,count,peak}, windows);
+}
+async function analyzeFullFile(file, runId) {
+  ensureAudioGraph();
+  setAnalysisStatus('音量を解析中…（全体解析）');
+  const bytes = await file.arrayBuffer();
+  if (runId !== analysisRunId) throw new DOMException('aborted','AbortError');
+  const decoded = await audioContext.decodeAudioData(bytes);
+  if (runId !== analysisRunId) throw new DOMException('aborted','AbortError');
+  await yieldToUi();
+  return { ...analyzeDecodedBuffer(decoded), method:'full', duration:decoded.duration };
+}
+async function waitForPlaying(timeoutMs = 4000) {
+  if (!audio.paused && !audio.ended) return true;
+  return await new Promise(resolve => {
+    const done = v => { clearTimeout(timer); audio.removeEventListener('play', onPlay); resolve(v); };
+    const onPlay = () => done(true);
+    const timer = setTimeout(() => done(false), timeoutMs);
+    audio.addEventListener('play', onPlay, { once:true });
+  });
+}
+async function analyzeLiveSample(runId, seconds = 9) {
+  ensureAudioGraph();
+  const playing = await waitForPlaying();
+  if (!playing) return null;
+  setAnalysisStatus(`音量を解析中…（長尺向け ${seconds}秒サンプル）`);
+  const data = new Float32Array(analysisTap.fftSize);
+  const windows = []; let totalSum = 0, totalCount = 0, peak = 0;
+  const start = performance.now();
+  while ((performance.now() - start) < seconds * 1000 && runId === analysisRunId && currentTrack) {
+    analysisTap.getFloatTimeDomainData(data);
+    let sum = 0;
+    for (let i=0;i<data.length;i+=2) { const v=data[i]; sum += v*v; totalSum += v*v; totalCount++; peak=Math.max(peak,Math.abs(v)); }
+    const rms = Math.sqrt(sum / Math.ceil(data.length/2));
+    windows.push(linToDb(rms));
+    await new Promise(r => setTimeout(r, 180));
+  }
+  if (runId !== analysisRunId) throw new DOMException('aborted','AbortError');
+  const stats = statsFromSamples({sumSq:totalSum,count:totalCount,peak}, windows);
+  return stats ? { ...stats, method:'live', duration:seconds } : null;
+}
+async function analyzeFileAdaptive(t, file, runId) {
+  const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
+  const fullSafe = file.size <= 24 * 1024 * 1024 && (!duration || duration <= 12 * 60);
+  if (fullSafe) {
+    try { return await analyzeFullFile(file, runId); }
+    catch (err) { if (err?.name === 'AbortError') throw err; console.warn('全体解析からサンプル解析へ切替:', err); }
+  }
+  return await analyzeLiveSample(runId, 9);
+}
+function suggestAutoParams(stats, prefs) {
+  let gain = sliderToGain(gainSlider.value);
+  if (prefs.gainMode === 'rms' && Number.isFinite(stats.rmsDb)) gain = dbToGain(prefs.rmsTarget - stats.rmsDb);
+  else if (prefs.gainMode === 'peak' && Number.isFinite(stats.peakDb)) gain = dbToGain(prefs.peakTarget - stats.peakDb);
+  gain = clamp(gain, GAIN_MIN, GAIN_MAX);
+  const gainDbAdj = linToDb(gain);
+
+  const c = {
+    enabled:compressorToggle.checked, threshold:Number(threshold.value), ratio:Number(ratio.value), knee:Number(knee.value),
+    attack:Number(attack.value), release:Number(release.value), makeup:Number(makeup.value)
+  };
+  if (prefs.compressor && Number.isFinite(stats.p10) && Number.isFinite(stats.p90)) {
+    const p10 = stats.p10 + gainDbAdj, p25 = stats.p25 + gainDbAdj, p50 = stats.p50 + gainDbAdj, p90 = stats.p90 + gainDbAdj;
+    const span = Math.max(0, p90 - p10); const target = prefs.dynamicRange;
+    c.enabled = true;
+    if (span <= target + 1) {
+      c.threshold = clamp(p90 - 3, -60, -1); c.ratio = 1.0; c.knee = 10; c.makeup = 0;
+    } else {
+      // 低音量側を保ちつつ、目標レンジの約35%地点から上側を圧縮する。
+      const th = clamp(p10 + target * .35, -60, -1);
+      const remaining = Math.max(2, target - (th - p10));
+      const requiredRatio = (p90 - th) / remaining;
+      c.threshold = th;
+      c.ratio = clamp(requiredRatio, 1.1, 8);
+      c.knee = clamp(span * .45, 6, 22);
+      const upperReduction = Math.max(0, (p90 - th) - (p90 - th) / c.ratio);
+      c.makeup = clamp(upperReduction * .30, 0, 6);
+      const asym = Number.isFinite(p50) && Number.isFinite(p25) ? Math.max(0, p50 - p25) : 5;
+      c.attack = asym > 8 ? .006 : .012;
+      c.release = asym > 8 ? .16 : .26;
+    }
+  }
+  return { gain, compressor:c };
+}
+function animateUiControls(target, ms = 1500) {
+  const start = performance.now();
+  const from = {
+    gain:Number(gainSlider.value), threshold:Number(threshold.value), ratio:Number(ratio.value), knee:Number(knee.value), attack:Number(attack.value), release:Number(release.value), makeup:Number(makeup.value)
+  };
+  const to = {
+    gain:gainToSlider(target.gain), threshold:target.compressor.threshold, ratio:target.compressor.ratio, knee:target.compressor.knee,
+    attack:target.compressor.attack, release:target.compressor.release, makeup:target.compressor.makeup
+  };
+  compressorToggle.checked = Boolean(target.compressor.enabled);
+  if (audioContext) rebuildAudioGraph();
+  // 音自体は先に同じ時間軸でランプ予約し、UIは視覚的に追従させる。
+  gainSlider.value = to.gain; threshold.value = to.threshold; ratio.value = to.ratio; knee.value = to.knee; attack.value = to.attack; release.value = to.release; makeup.value = to.makeup;
+  applyAudioSettings(ms / 1000);
+  gainSlider.value = from.gain; threshold.value = from.threshold; ratio.value = from.ratio; knee.value = from.knee; attack.value = from.attack; release.value = from.release; makeup.value = from.makeup;
+  updateAudioSettingLabels();
+  return new Promise(resolve => {
+    const tick = now => {
+      const t = Math.min(1, (now - start) / ms); const e = 1 - Math.pow(1 - t, 3);
+      gainSlider.value = from.gain + (to.gain - from.gain) * e;
+      threshold.value = from.threshold + (to.threshold - from.threshold) * e;
+      ratio.value = from.ratio + (to.ratio - from.ratio) * e;
+      knee.value = from.knee + (to.knee - from.knee) * e;
+      attack.value = from.attack + (to.attack - from.attack) * e;
+      release.value = from.release + (to.release - from.release) * e;
+      makeup.value = from.makeup + (to.makeup - from.makeup) * e;
+      updateAudioSettingLabels();
+      if (t < 1) requestAnimationFrame(tick); else { applyAudioSettings(0); resolve(); }
+    };
+    requestAnimationFrame(tick);
+  });
+}
+async function startAutoAnalysis(t, file) {
+  const prefs = getAutoPrefs();
+  if (prefs.gainMode === 'off' && !prefs.compressor) { setAnalysisStatus(''); return; }
+  const runId = ++analysisRunId;
+  let stats = getCachedAnalysis(t, file);
+  try {
+    if (!stats) {
+      stats = await analyzeFileAdaptive(t, file, runId);
+      if (!stats || runId !== analysisRunId || currentTrack !== t) return;
+      saveAnalysis(t, file, stats);
+    } else setAnalysisStatus('保存済み解析結果を読み込み中…');
+    if (runId !== analysisRunId || currentTrack !== t) return;
+    const target = suggestAutoParams(stats, prefs);
+    const modeText = stats.method === 'live' ? '短時間サンプル' : '全体';
+    setAnalysisStatus(`解析完了（${modeText}）→ 推奨値を反映中…`);
+    await animateUiControls(target, 1500);
+    if (runId !== analysisRunId || currentTrack !== t) return;
+    saveTrackSettings(file);
+    const details = [`RMS ${Number.isFinite(stats.rmsDb)?stats.rmsDb.toFixed(1):'—'} dB`, `Peak ${Number.isFinite(stats.peakDb)?stats.peakDb.toFixed(1):'—'} dB`];
+    if (prefs.compressor && Number.isFinite(stats.p10) && Number.isFinite(stats.p90)) details.push(`P10–P90 ${(stats.p90-stats.p10).toFixed(1)} dB`);
+    setAnalysisStatus(`自動補正済み：${details.join(' / ')}`, 'success');
+  } catch (err) {
+    if (err?.name === 'AbortError') return;
+    console.warn('自動音響解析失敗:', err);
+    setAnalysisStatus('自動解析を完了できませんでした。手動設定はそのまま使えます。', 'warn');
+  }
 }
 
 function clearArtwork() { if (artworkUrl) URL.revokeObjectURL(artworkUrl); artworkUrl = null; artwork.hidden = true; artwork.removeAttribute('src'); artworkPlaceholder.hidden = false; }
@@ -578,6 +831,7 @@ async function ensureTrackFile(t) {
   }
 }
 async function selectTrack(t, autoplay = false, userInitiated = false) {
+  analysisRunId++; setAnalysisStatus('');
   try {
     if (t.handle) {
       const target = directoryHandle || t.handle;
@@ -613,6 +867,8 @@ async function selectTrack(t, autoplay = false, userInitiated = false) {
     showArtwork(t.artworkBlob); playPause.disabled = false; prevTrack.disabled = false; nextTrack.disabled = false;
     loadTrackSettings(file); updateMediaSession(t); renderLibrary();
     if (autoplay) { await resumeAudioContext(); applyAudioSettings(); await audio.play(); }
+    // 再生開始を待たせず、自動解析は並行して走らせる。結果は既存スライダーへ滑らかに反映。
+    setTimeout(() => { if (currentTrack === t) startAutoAnalysis(t, file); }, 0);
   } catch (err) { console.error(err); if (err?.name !== 'NotAllowedError') alert('このMP3を開けませんでした。'); }
 }
 function playbackList() { return sortedTracks.length ? sortedTracks : sortTrackArray(tracks); }
@@ -740,6 +996,13 @@ function applyRowSize(value) {
 }
 applyRowSize(localStorage.getItem(ROW_SIZE_KEY) || 'normal');
 rowSizeSelect.addEventListener('change', () => applyRowSize(rowSizeSelect.value));
+syncAutoPrefsUi();
+[autoGainMode, autoRmsTarget, autoPeakTarget, autoCompressorEnabled, autoDynamicRangeTarget].forEach(el => el.addEventListener('change', () => {
+  saveAutoPrefs();
+  if (currentTrack && (currentTrack.file || currentTrack.handle)) {
+    ensureTrackFile(currentTrack).then(file => startAutoAnalysis(currentTrack, file)).catch(console.warn);
+  }
+}));
 
 sortSelect.addEventListener('change', renderLibrary);
 viewTabs.forEach(btn => btn.addEventListener('click', () => { viewMode = btn.dataset.view; viewPath = []; viewTabs.forEach(x => x.classList.toggle('active', x === btn)); renderLibrary(); }));
@@ -789,6 +1052,6 @@ async function restoreDirectoryAndCache() {
   } catch (err) { console.warn(err); permissionBox.classList.remove('hidden'); }
 }
 
-window.addEventListener('beforeunload', () => { metadataRunId++; if (objectUrl) URL.revokeObjectURL(objectUrl); clearArtwork(); });
+window.addEventListener('beforeunload', () => { metadataRunId++; analysisRunId++; if (objectUrl) URL.revokeObjectURL(objectUrl); clearArtwork(); });
 prevTrack.disabled = true; nextTrack.disabled = true; setLoopMode('one'); setDrawerExpanded(false); setMediaActionHandlers(); applyAudioSettings(); renderLibrary(); restoreDirectoryAndCache();
 if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('./service-worker.js').catch(console.error));
