@@ -74,6 +74,7 @@ const analysisStatus = $('analysisStatus');
 
 const GAIN_MIN = 0.1;
 const GAIN_MAX = 1.8;
+const ACTIVE_WINDOW_FLOOR_DB = -60;
 const DB_NAME = 'local-mp3-player-db-v2';
 const HANDLE_STORE = 'handles';
 const LIBRARY_STORE = 'library';
@@ -81,7 +82,7 @@ const DIRECTORY_KEY = 'music-directory';
 const LIBRARY_KEY = 'library-cache-v4';
 const SETTINGS_PREFIX = 'local-mp3-player:v8:';
 const V7_PREFIX = 'local-mp3-player:v7:';
-const ANALYSIS_PREFIX = 'local-mp3-player:analysis:v8:';
+const ANALYSIS_PREFIX = 'local-mp3-player:analysis:v9:';
 const AUTO_PREFS_KEY = 'local-mp3-player:auto-prefs:v8';
 const V6_PREFIX = 'local-mp3-player:v6:';
 const V5_PREFIX = 'local-mp3-player:v5:';
@@ -120,8 +121,13 @@ function setMetadataStatus(text = '') {
   metadataStatus.classList.toggle('hidden', !text);
 }
 function updateLibrarySummary(label = null) {
-  const folderName = label || directoryHandle?.name || cachedFolderName || (tracks.length ? '一時選択' : '未登録');
-  folderStatus.textContent = `音楽ライブラリ：${folderName}（${tracks.length}曲）`;
+  const rootName = label || directoryHandle?.name || cachedFolderName || (tracks.length ? '一時選択' : '未登録');
+  const parts = [rootName];
+  if (viewMode === 'folder' && viewPath.length) parts.push(...viewPath);
+  folderStatus.textContent = `📁：${parts.join(' › ')}`;
+  const canGoUp = viewMode === 'folder' && viewPath.length > 0;
+  folderStatus.classList.toggle('can-go-up', canGoUp);
+  folderStatus.title = canGoUp ? 'タップで親フォルダへ戻る' : rootName;
 }
 function sliderToGain(value) {
   const t = Number(value) / 1000;
@@ -636,12 +642,16 @@ function saveAnalysis(t, file, result) {
 }
 function statsFromSamples(samples, windowDb) {
   if (!samples) return null;
-  const valid = windowDb.filter(Number.isFinite).filter(x => x > -70).sort((a,b) => a-b);
+  // コンプレッサー用の分位点は「有音区間」だけで計算する。
+  // ほぼ無音の時間窓を含めるとP30/P50が曲頭・曲間の静寂に引っ張られるため除外する。
+  const active = windowDb.filter(Number.isFinite).filter(x => x > ACTIVE_WINDOW_FLOOR_DB).sort((a,b) => a-b);
   return {
     rmsDb:linToDb(Math.sqrt(samples.sumSq / Math.max(1, samples.count))),
     peakDb:linToDb(samples.peak),
-    p10:percentile(valid, .10), p25:percentile(valid, .25), p50:percentile(valid, .50), p75:percentile(valid, .75), p90:percentile(valid, .90),
-    validWindows:valid.length
+    p10:percentile(active, .10), p25:percentile(active, .25), p30:percentile(active, .30),
+    p50:percentile(active, .50), p75:percentile(active, .75), p90:percentile(active, .90),
+    validWindows:active.length,
+    silenceFloorDb:ACTIVE_WINDOW_FLOOR_DB
   };
 }
 function analyzeDecodedBuffer(buffer) {
@@ -723,26 +733,43 @@ function suggestAutoParams(stats, prefs) {
     enabled:compressorToggle.checked, threshold:Number(threshold.value), ratio:Number(ratio.value), knee:Number(knee.value),
     attack:Number(attack.value), release:Number(release.value), makeup:Number(makeup.value)
   };
-  if (prefs.compressor && Number.isFinite(stats.p10) && Number.isFinite(stats.p90)) {
-    const p10 = stats.p10 + gainDbAdj, p25 = stats.p25 + gainDbAdj, p50 = stats.p50 + gainDbAdj, p90 = stats.p90 + gainDbAdj;
-    const span = Math.max(0, p90 - p10); const target = prefs.dynamicRange;
+
+  if (prefs.compressor && Number.isFinite(stats.p30) && Number.isFinite(stats.p50) && Number.isFinite(stats.p90)) {
+    // Gain段の後にコンプレッサーがあるため、分位点も同じGain dBだけ平行移動させる。
+    const p30 = stats.p30 + gainDbAdj;
+    const p50 = stats.p50 + gainDbAdj;
+    const p90 = stats.p90 + gainDbAdj;
+    const sourceSpan = Math.max(0, p90 - p30);
+    const targetSpan = Math.max(1, Number(prefs.dynamicRange) || 14);
+
     c.enabled = true;
-    if (span <= target + 1) {
-      c.threshold = clamp(p90 - 3, -60, -1); c.ratio = 1.0; c.knee = 10; c.makeup = 0;
-    } else {
-      // 低音量側を保ちつつ、目標レンジの約35%地点から上側を圧縮する。
-      const th = clamp(p10 + target * .35, -60, -1);
-      const remaining = Math.max(2, target - (th - p10));
-      const requiredRatio = (p90 - th) / remaining;
-      c.threshold = th;
-      c.ratio = clamp(requiredRatio, 1.1, 8);
-      c.knee = clamp(span * .45, 6, 22);
-      const upperReduction = Math.max(0, (p90 - th) - (p90 - th) / c.ratio);
-      c.makeup = clamp(upperReduction * .30, 0, 6);
-      const asym = Number.isFinite(p50) && Number.isFinite(p25) ? Math.max(0, p50 - p25) : 5;
-      c.attack = asym > 8 ? .006 : .012;
-      c.release = asym > 8 ? .16 : .26;
-    }
+    c.threshold = clamp(p30, -100, 0);
+
+    // Hard-knee近似:
+    // y = T + (x-T)/R (x>T)
+    // よって P30→P90 の最終幅を targetSpan にするには R=(P90-P30)/targetSpan。
+    // 既に目標幅以下なら圧縮しない(R=1)。
+    const requiredRatio = sourceSpan > targetSpan ? sourceSpan / targetSpan : 1;
+    c.ratio = clamp(requiredRatio, 1, 20);
+
+    // P30を圧縮開始点として数式通りに扱いやすくするためkneeは0（Hard knee）。
+    c.knee = 0;
+
+    // 時間方向の追従は固定の穏当な初期値。静的なP30/P50/P90条件とは独立。
+    c.attack = .010;
+    c.release = .200;
+
+    // P50を圧縮前と同じdBへ戻すMakeup Gain。
+    const compressedP50 = p50 <= c.threshold
+      ? p50
+      : c.threshold + (p50 - c.threshold) / c.ratio;
+    c.makeup = clamp(p50 - compressedP50, 0, 20);
+
+    // 表示用の推定値（ratio上限20に当たると目標幅へ完全には届かないことがある）。
+    c._sourceSpan = sourceSpan;
+    c._targetSpan = targetSpan;
+    c._estimatedSpan = c.ratio > 0 ? sourceSpan / c.ratio : sourceSpan;
+    c._p30 = p30; c._p50 = p50; c._p90 = p90;
   }
   return { gain, compressor:c };
 }
@@ -797,7 +824,12 @@ async function startAutoAnalysis(t, file) {
     if (runId !== analysisRunId || currentTrack !== t) return;
     saveTrackSettings(file);
     const details = [`RMS ${Number.isFinite(stats.rmsDb)?stats.rmsDb.toFixed(1):'—'} dB`, `Peak ${Number.isFinite(stats.peakDb)?stats.peakDb.toFixed(1):'—'} dB`];
-    if (prefs.compressor && Number.isFinite(stats.p10) && Number.isFinite(stats.p90)) details.push(`P10–P90 ${(stats.p90-stats.p10).toFixed(1)} dB`);
+    if (prefs.compressor && Number.isFinite(stats.p30) && Number.isFinite(stats.p90)) {
+      const src = stats.p90 - stats.p30;
+      const est = target.compressor?._estimatedSpan;
+      details.push(`有音P30–P90 ${src.toFixed(1)}→${Number.isFinite(est)?est.toFixed(1):'—'} dB`);
+      details.push(`P50維持 Makeup +${Number(target.compressor.makeup).toFixed(1)} dB`);
+    }
     setAnalysisStatus(`自動補正済み：${details.join(' / ')}`, 'success');
   } catch (err) {
     if (err?.name === 'AbortError') return;
@@ -1004,6 +1036,11 @@ syncAutoPrefsUi();
   }
 }));
 
+folderStatus.addEventListener('click', () => {
+  if (viewMode !== 'folder' || !viewPath.length) return;
+  viewPath = viewPath.slice(0, -1);
+  renderLibrary();
+});
 sortSelect.addEventListener('change', renderLibrary);
 viewTabs.forEach(btn => btn.addEventListener('click', () => { viewMode = btn.dataset.view; viewPath = []; viewTabs.forEach(x => x.classList.toggle('active', x === btn)); renderLibrary(); }));
 

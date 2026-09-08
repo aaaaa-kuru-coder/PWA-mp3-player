@@ -9,7 +9,7 @@
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" href="./icons/icon-192.png" />
   <link rel="stylesheet" href="./style.css" />
-  <title>Local MP3 Player v8</title>
+  <title>Local MP3 Player v9</title>
 </head>
 <body>
   <main id="appShell" class="app-shell">
@@ -48,10 +48,10 @@
               <span><input id="autoPeakTarget" type="number" min="-12" max="-0.5" step="0.5" value="-3" /> dBFS</span>
             </label>
             <label class="menu-check-item"><span>自動コンプレッサー</span><input id="autoCompressorEnabled" type="checkbox" /></label>
-            <label class="menu-setting-item compact-number-setting" for="autoDynamicRangeTarget">P10–P90目標幅
+            <label class="menu-setting-item compact-number-setting" for="autoDynamicRangeTarget">P30–P90目標幅
               <span><input id="autoDynamicRangeTarget" type="number" min="6" max="30" step="1" value="14" /> dB</span>
             </label>
-            <div class="menu-note">曲を開くと解析し、推奨値へ約1.5秒かけて既存スライダーを動かします。長尺音声は短時間サンプル解析へ自動切替します。</div>
+            <div class="menu-note">有音区間のみからP30/P50/P90を解析し、P30–P90が目標幅になるRatioと、P50を保つ出力Gainを推定します。約1.5秒かけて既存スライダーへ反映します。</div>
             <div class="menu-divider"></div>
             <button id="showAppInfo" type="button" role="menuitem">ℹ️ アプリ仕様・プライバシー</button>
           </div>
@@ -60,17 +60,9 @@
 
       <div class="list-toolbar library-summary-row">
         <div class="library-summary-wrap">
-          <div id="folderStatus" class="library-summary">音楽ライブラリ：未登録（0曲）</div>
+          <button id="folderStatus" class="library-summary library-location" type="button" aria-label="現在のフォルダ。タップで親フォルダへ">📁：未登録</button>
           <div id="metadataStatus" class="metadata-status hidden"></div>
         </div>
-        <label id="sortLabel" class="sort-label"><span>並び順：</span>
-          <select id="sortSelect">
-            <option value="filename">ファイル名</option>
-            <option value="title">曲名</option>
-            <option value="artist">アーティスト</option>
-            <option value="album">アルバム</option>
-          </select>
-        </label>
         <span id="trackCount" class="track-count hidden">0曲</span>
       </div>
 
@@ -79,6 +71,14 @@
         <button class="view-tab" type="button" data-view="folder"><span>📁</span><span>フォルダ</span></button>
         <button class="view-tab" type="button" data-view="artist"><span>👤</span><span>アーティスト</span></button>
         <button class="view-tab" type="button" data-view="album"><span>💿</span><span>アルバム</span></button>
+        <label id="sortLabel" class="sort-label tabs-sort"><span>並び：</span>
+          <select id="sortSelect" aria-label="並び順">
+            <option value="filename">ファイル名</option>
+            <option value="title">曲名</option>
+            <option value="artist">アーティスト</option>
+            <option value="album">アルバム</option>
+          </select>
+        </label>
       </div>
 
       <div id="breadcrumb" class="breadcrumb hidden" aria-label="現在位置"></div>
