@@ -9,7 +9,7 @@
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" href="./icons/icon-192.png" />
   <link rel="stylesheet" href="./style.css" />
-  <title>Local MP3 Player v9</title>
+  <title>Local MP3 Player v10</title>
 </head>
 <body>
   <main id="appShell" class="app-shell">
@@ -60,7 +60,9 @@
 
       <div class="list-toolbar library-summary-row">
         <div class="library-summary-wrap">
-          <button id="folderStatus" class="library-summary library-location" type="button" aria-label="現在のフォルダ。タップで親フォルダへ">📁：未登録</button>
+          <div id="folderStatus" class="library-summary library-location" aria-label="現在位置">
+            <span class="location-icon" aria-hidden="true">📁：</span><span class="location-static">未登録</span>
+          </div>
           <div id="metadataStatus" class="metadata-status hidden"></div>
         </div>
         <span id="trackCount" class="track-count hidden">0曲</span>
@@ -173,10 +175,10 @@
           </div>
           <div id="compressorControls" class="compressor-controls disabled-panel">
             <label>しきい値 <output id="thresholdValue">-35 dB</output>
-              <input id="threshold" type="range" min="-60" max="0" value="-35" step="1" />
+              <input id="threshold" type="range" min="-100" max="0" value="-35" step="1" />
             </label>
             <label>比率 <output id="ratioValue">2.5 : 1</output>
-              <input id="ratio" type="range" min="1" max="12" value="2.5" step="0.1" />
+              <input id="ratio" type="range" min="1" max="20" value="2.5" step="0.1" />
             </label>
             <label>ニー <output id="kneeValue">20 dB</output>
               <input id="knee" type="range" min="0" max="40" value="20" step="1" />
@@ -188,8 +190,42 @@
               <input id="release" type="range" min="0.02" max="1" value="0.25" step="0.01" />
             </label>
             <label>出力ゲイン <output id="makeupValue">0.0 dB</output>
-              <input id="makeup" type="range" min="-6" max="12" value="0" step="0.1" />
+              <input id="makeup" type="range" min="-6" max="20" value="0" step="0.1" />
             </label>
+          </div>
+        </div>
+        <div class="visualization-block">
+          <div class="setting-row visualization-toggle-row">
+            <div>
+              <div class="setting-title">音量変換の可視化</div>
+              <div class="setting-note">表示時だけ音量分布を解析します</div>
+            </div>
+            <label class="switch">
+              <input id="visualizationToggle" type="checkbox" />
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div id="visualizationPanel" class="visualization-panel hidden">
+            <div id="visualizationStatus" class="visualization-status" aria-live="polite"></div>
+            <div class="chart-grid">
+              <figure class="chart-card">
+                <figcaption>元ファイルの有音RMS分布</figcaption>
+                <canvas id="histOriginal" class="audio-chart" width="640" height="240"></canvas>
+              </figure>
+              <figure class="chart-card">
+                <figcaption>Gain適用後の分布</figcaption>
+                <canvas id="histGain" class="audio-chart" width="640" height="240"></canvas>
+              </figure>
+              <figure class="chart-card">
+                <figcaption>Compressor適用後の分布</figcaption>
+                <canvas id="histCompressed" class="audio-chart" width="640" height="240"></canvas>
+              </figure>
+              <figure class="chart-card transfer-card">
+                <figcaption>Compressor 静的入出力（X:入力dB / Y:出力dB）</figcaption>
+                <canvas id="transferCurve" class="audio-chart" width="640" height="280"></canvas>
+              </figure>
+            </div>
+            <div class="visualization-note">ヒストグラムは約200ms窓のRMSから、ほぼ無音（-60 dBFS以下）を除外して作成します。XYグラフはThreshold / Ratio / Knee / Output Gainによる静的特性です。Attack / Releaseの時間方向の効果はXY曲線には含みません。</div>
           </div>
         </div>
       </div>
@@ -202,6 +238,7 @@
       <p>通常起動では前回のライブラリ情報を IndexedDB から表示し、音楽フォルダ全体を毎回走査しません。実フォルダの確認は右上メニューの「ライブラリを更新」で手動実行します。</p>
       <p>MP3本体は再生する曲だけ端末から取得します。ID3の文字情報は未解析曲だけ遅延取得し、ジャケット画像は原則として再生時にだけ読みます。</p>
       <p>自動ゲイン・自動コンプレッサーを有効にした場合、端末内で音量統計を解析し、推奨値を既存のGain/コンプレッサー操作へ反映します。解析結果は端末内にキャッシュし、長尺音声では負荷を抑えるため短時間サンプル解析へ切り替えます。</p>
+      <p>「音量変換の可視化」をONにした場合も解析は端末内だけで行い、元音量・Gain後・Compressor後の分布と静的入出力曲線をCanvasへ描画します。グラフ表示のために音声データを外部へ送信する処理はありません。</p>
       <p>外部API・CDN・広告・アクセス解析・MP3アップロード処理はありません。PWA本体の取得・更新確認としてGitHub Pagesとの通常のWeb通信は発生しますが、ローカルMP3をその通信へ載せる処理はありません。</p>
       <div class="modal-actions single-action">
         <button id="closeAppInfo" class="modal-primary" type="button">閉じる</button>

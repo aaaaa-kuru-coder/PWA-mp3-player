@@ -1,8 +1,8 @@
-# Local MP3 Player v9
+# Local MP3 Player v10
 
 GitHub Pages にそのまま配置できる、端末内MP3向けのPWAプレイヤーです。v7 の画面構成・キャッシュ式ライブラリ・遅延読み込み・暖色ナイトテーマを維持し、自動音響補正を追加しています。
 
-## v9 の主な変更
+## v10 の主な変更
 
 - Gain範囲を `0.1× ～ 1.8×` に拡張
 - 右上メニューに自動Gainモードを追加：補正なし / 平均RMS / 最大Peak
@@ -21,15 +21,22 @@ GitHub Pages にそのまま配置できる、端末内MP3向けのPWAプレイ�
 
 ## GitHub Pages
 
-このフォルダの中身を Pages の公開ルートへ配置してください。Service Worker のキャッシュ名は v9 に更新済みです。
+このフォルダの中身を Pages の公開ルートへ配置してください。Service Worker のキャッシュ名は v10 に更新済みです。
 
 ## ローカルMP3と通信
 
 MP3を外部へアップロードする処理はありません。自動音響解析もブラウザ内で行います。外部API/CDN/アクセス解析は使用せず、CSP は `connect-src 'none'` のままです。GitHub Pages からPWA本体を取得・更新確認する通常のWeb通信は発生します。
 
 
-## v9 自動コンプレッサー
+## v10 自動コンプレッサー
 - ほぼ無音（約 -60 dBFS 以下）の時間窓を分位点統計から除外します。
 - P30をしきい値にし、P30–P90が指定目標幅になるようRatioを推定します。
 - P50が圧縮前と同じdBになるようMakeup Gainを逆算します。
 - 上部の現在位置は「📁：ルート › 子フォルダ」で表示し、タップで親フォルダへ戻れます。
+
+
+## v10 additions
+- Optional lazy visualization of original / post-Gain / post-Compressor loudness histograms.
+- Static compressor input/output transfer curve (Attack/Release excluded because they are time-domain behavior).
+- Interactive location breadcrumbs in the compact header for folder / artist / album navigation.
+- Larger menu button spanning the title/location rows.

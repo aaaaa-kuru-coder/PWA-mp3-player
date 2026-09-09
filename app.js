@@ -71,6 +71,13 @@ const autoPeakTarget = $('autoPeakTarget');
 const autoCompressorEnabled = $('autoCompressorEnabled');
 const autoDynamicRangeTarget = $('autoDynamicRangeTarget');
 const analysisStatus = $('analysisStatus');
+const visualizationToggle = $('visualizationToggle');
+const visualizationPanel = $('visualizationPanel');
+const visualizationStatus = $('visualizationStatus');
+const histOriginal = $('histOriginal');
+const histGain = $('histGain');
+const histCompressed = $('histCompressed');
+const transferCurve = $('transferCurve');
 
 const GAIN_MIN = 0.1;
 const GAIN_MAX = 1.8;
@@ -111,6 +118,9 @@ let suppressDrawerClick = false;
 let analysisRunId = 0;
 let analysisTap = null;
 let analysisSink = null;
+let visualizationRunId = 0;
+const visualizationCache = new Map();
+let currentVisualization = null;
 
 function setLoading(show, text = '音楽ライブラリを読み込み中…') {
   loadingText.textContent = text;
@@ -122,12 +132,30 @@ function setMetadataStatus(text = '') {
 }
 function updateLibrarySummary(label = null) {
   const rootName = label || directoryHandle?.name || cachedFolderName || (tracks.length ? '一時選択' : '未登録');
-  const parts = [rootName];
-  if (viewMode === 'folder' && viewPath.length) parts.push(...viewPath);
-  folderStatus.textContent = `📁：${parts.join(' › ')}`;
-  const canGoUp = viewMode === 'folder' && viewPath.length > 0;
-  folderStatus.classList.toggle('can-go-up', canGoUp);
-  folderStatus.title = canGoUp ? 'タップで親フォルダへ戻る' : rootName;
+  const segments = [{ label:rootName, path:[] }];
+
+  if (viewMode === 'folder') {
+    viewPath.forEach((seg, idx) => segments.push({ label:seg, path:viewPath.slice(0, idx + 1) }));
+  } else if (viewMode === 'artist') {
+    if (viewPath[0]) segments.push({ label:viewPath[0], path:[viewPath[0]] });
+    if (viewPath[1]) segments.push({ label:viewPath[1], path:[viewPath[0], viewPath[1]] });
+  } else if (viewMode === 'album') {
+    if (viewPath[0]) segments.push({ label:viewPath[0], path:[viewPath[0]] });
+  }
+
+  folderStatus.replaceChildren();
+  const icon = document.createElement('span'); icon.className = 'location-icon'; icon.textContent = '📁：'; folderStatus.append(icon);
+  segments.forEach((seg, idx) => {
+    if (idx) { const sep = document.createElement('span'); sep.className = 'location-sep'; sep.textContent = '›'; folderStatus.append(sep); }
+    const isCurrent = idx === segments.length - 1;
+    const btn = document.createElement('button'); btn.type = 'button'; btn.className = 'location-crumb' + (isCurrent ? ' current' : ''); btn.textContent = seg.label;
+    if (!isCurrent) {
+      btn.title = `${seg.label}へ戻る`;
+      btn.addEventListener('click', () => { viewPath = [...seg.path]; renderLibrary(); });
+    } else btn.disabled = true;
+    folderStatus.append(btn);
+  });
+  folderStatus.classList.toggle('can-go-up', segments.length > 1);
 }
 function sliderToGain(value) {
   const t = Number(value) / 1000;
@@ -800,7 +828,7 @@ function animateUiControls(target, ms = 1500) {
       release.value = from.release + (to.release - from.release) * e;
       makeup.value = from.makeup + (to.makeup - from.makeup) * e;
       updateAudioSettingLabels();
-      if (t < 1) requestAnimationFrame(tick); else { applyAudioSettings(0); resolve(); }
+      if (t < 1) requestAnimationFrame(tick); else { applyAudioSettings(0); if (visualizationToggle.checked) requestAnimationFrame(redrawVisualizations); resolve(); }
     };
     requestAnimationFrame(tick);
   });
@@ -838,6 +866,163 @@ async function startAutoAnalysis(t, file) {
   }
 }
 
+
+function setVisualizationStatus(text = '', kind = '') {
+  visualizationStatus.textContent = text;
+  visualizationStatus.className = 'visualization-status' + (kind ? ` ${kind}` : '');
+}
+function currentCompressorConfig() {
+  return {
+    enabled:compressorToggle.checked,
+    threshold:Number(threshold.value), ratio:Number(ratio.value), knee:Number(knee.value),
+    attack:Number(attack.value), release:Number(release.value), makeup:Number(makeup.value)
+  };
+}
+function compressorStaticDb(x, c = currentCompressorConfig()) {
+  if (!c.enabled) return x;
+  const T = Number(c.threshold), R = Math.max(1, Number(c.ratio) || 1), K = Math.max(0, Number(c.knee) || 0);
+  let y;
+  if (K <= 0.0001) y = x <= T ? x : T + (x - T) / R;
+  else {
+    const lo = T - K / 2, hi = T + K / 2;
+    if (x <= lo) y = x;
+    else if (x >= hi) y = T + (x - T) / R;
+    else {
+      // Standard soft-knee quadratic interpolation used for static compressor curves.
+      const d = x - T + K / 2;
+      y = x + (1 / R - 1) * d * d / (2 * K);
+    }
+  }
+  return y + Number(c.makeup || 0);
+}
+function decodedActiveWindows(buffer) {
+  const channels = Array.from({length:buffer.numberOfChannels}, (_,i) => buffer.getChannelData(i));
+  const windowFrames = Math.max(1, Math.round(buffer.sampleRate * 0.20));
+  const maxWindows = 6000;
+  const totalWindows = Math.ceil(buffer.length / windowFrames);
+  const windowStride = Math.max(1, Math.ceil(totalWindows / maxWindows));
+  const out = [];
+  for (let w = 0; w < totalWindows; w += windowStride) {
+    const start = w * windowFrames, end = Math.min(buffer.length, start + windowFrames);
+    const sampleStride = Math.max(1, Math.ceil((end - start) / 2200));
+    let sum = 0, count = 0;
+    for (let i = start; i < end; i += sampleStride) {
+      let sq = 0;
+      for (const ch of channels) { const v = ch[i] || 0; sq += v * v; }
+      sum += sq / channels.length; count++;
+    }
+    if (count) { const db = linToDb(Math.sqrt(sum / count)); if (Number.isFinite(db) && db > ACTIVE_WINDOW_FLOOR_DB) out.push(db); }
+  }
+  return out;
+}
+async function analyzeVisualizationFull(file, runId) {
+  ensureAudioGraph();
+  setVisualizationStatus('グラフ用の音量分布を解析中…（全体）');
+  const bytes = await file.arrayBuffer();
+  if (runId !== visualizationRunId) throw new DOMException('aborted','AbortError');
+  const decoded = await audioContext.decodeAudioData(bytes);
+  if (runId !== visualizationRunId) throw new DOMException('aborted','AbortError');
+  await yieldToUi();
+  return { windows:decodedActiveWindows(decoded), method:'full', duration:decoded.duration };
+}
+async function analyzeVisualizationLive(runId, seconds = 12) {
+  ensureAudioGraph();
+  const playing = await waitForPlaying(1800);
+  if (!playing) throw new Error('長尺ファイルは再生中の短時間サンプルで可視化します。再生してからもう一度表示してください。');
+  setVisualizationStatus(`グラフ用の音量分布を解析中…（${seconds}秒サンプル）`);
+  const data = new Float32Array(analysisTap.fftSize); const windows = [];
+  const start = performance.now();
+  while ((performance.now() - start) < seconds * 1000 && runId === visualizationRunId && currentTrack) {
+    analysisTap.getFloatTimeDomainData(data);
+    let sum = 0, count = 0;
+    for (let i = 0; i < data.length; i += 2) { const v=data[i]; sum += v*v; count++; }
+    if (count) { const db = linToDb(Math.sqrt(sum/count)); if (Number.isFinite(db) && db > ACTIVE_WINDOW_FLOOR_DB) windows.push(db); }
+    await new Promise(r => setTimeout(r, 180));
+  }
+  if (runId !== visualizationRunId) throw new DOMException('aborted','AbortError');
+  return { windows, method:'live', duration:seconds };
+}
+function visualizationKey(t, file) { return trackKeyFor(t, file); }
+async function ensureVisualizationData(t = currentTrack, file = null) {
+  if (!visualizationToggle.checked || !t) return;
+  const runId = ++visualizationRunId;
+  try {
+    file = file || await ensureTrackFile(t);
+    const key = visualizationKey(t, file);
+    let data = visualizationCache.get(key);
+    if (!data) {
+      const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
+      const fullSafe = file.size <= 24 * 1024 * 1024 && (!duration || duration <= 12 * 60);
+      data = fullSafe ? await analyzeVisualizationFull(file, runId) : await analyzeVisualizationLive(runId, 12);
+      if (runId !== visualizationRunId || currentTrack !== t) return;
+      visualizationCache.set(key, data);
+    }
+    currentVisualization = { key, ...data };
+    const mode = data.method === 'live' ? '短時間サンプル' : '全体';
+    setVisualizationStatus(`表示中：${mode} / 有音窓 ${data.windows.length}個`, 'success');
+    requestAnimationFrame(redrawVisualizations);
+  } catch (err) {
+    if (err?.name === 'AbortError') return;
+    console.warn('可視化解析失敗:', err);
+    setVisualizationStatus(err?.message || '可視化用の解析を完了できませんでした。', 'warn');
+  }
+}
+function canvasSetup(canvas) {
+  const cssW = Math.max(260, canvas.clientWidth || 320), cssH = Math.max(150, canvas.clientHeight || 180);
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const w = Math.round(cssW*dpr), h = Math.round(cssH*dpr);
+  if (canvas.width !== w || canvas.height !== h) { canvas.width=w; canvas.height=h; }
+  const ctx = canvas.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0);
+  return {ctx,w:cssW,h:cssH};
+}
+function niceDbBounds(arrays) {
+  const vals = arrays.flat().filter(Number.isFinite);
+  if (!vals.length) return {min:-60,max:0};
+  let min = Math.floor(Math.min(...vals)/5)*5, max = Math.ceil(Math.max(...vals)/5)*5;
+  min = Math.min(min, -20); max = Math.max(max, 0); if (max-min < 20) min=max-20;
+  return {min:Math.max(-80,min), max:Math.min(20,max)};
+}
+function histogram(values, min, max, bins=28) {
+  const counts = Array(bins).fill(0), span = Math.max(1e-6,max-min);
+  for (const v of values) { if (!Number.isFinite(v)) continue; const i=Math.max(0,Math.min(bins-1,Math.floor((v-min)/span*bins))); counts[i]++; }
+  const total = Math.max(1, values.length); return counts.map(c => c/total*100);
+}
+function drawHistogram(canvas, values, bounds, accent='#fb923c') {
+  const {ctx,w,h}=canvasSetup(canvas); const pad={l:38,r:10,t:12,b:28}; const pw=w-pad.l-pad.r, ph=h-pad.t-pad.b;
+  ctx.clearRect(0,0,w,h); ctx.fillStyle='#160906'; ctx.fillRect(0,0,w,h);
+  const hist=histogram(values,bounds.min,bounds.max,28); const ymax=Math.max(5,Math.ceil(Math.max(...hist,1)/5)*5);
+  ctx.strokeStyle='rgba(251,146,60,.16)'; ctx.fillStyle='#b98770'; ctx.font='10px system-ui'; ctx.lineWidth=1;
+  for(let i=0;i<=4;i++){ const y=pad.t+ph*i/4; ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(w-pad.r,y);ctx.stroke(); const val=(ymax*(1-i/4)).toFixed(0)+'%';ctx.fillText(val,2,y+3); }
+  for(let i=0;i<=4;i++){ const x=pad.l+pw*i/4; const db=bounds.min+(bounds.max-bounds.min)*i/4; ctx.fillText(`${Math.round(db)}`,x-10,h-8); }
+  const bw=pw/hist.length;
+  ctx.fillStyle=accent;
+  hist.forEach((v,i)=>{ const bh=ph*v/ymax; ctx.fillRect(pad.l+i*bw+1,pad.t+ph-bh,Math.max(1,bw-2),bh); });
+  ctx.fillStyle='#d9a58d'; ctx.fillText('dBFS',w-34,h-8);
+}
+function drawTransfer(canvas, cfg, bounds) {
+  const {ctx,w,h}=canvasSetup(canvas); const pad={l:42,r:12,t:14,b:32}; const pw=w-pad.l-pad.r, ph=h-pad.t-pad.b;
+  const min=bounds.min, max=bounds.max; const xTo=v=>pad.l+(v-min)/(max-min)*pw, yTo=v=>pad.t+ph-(v-min)/(max-min)*ph;
+  ctx.clearRect(0,0,w,h); ctx.fillStyle='#160906'; ctx.fillRect(0,0,w,h); ctx.font='10px system-ui'; ctx.fillStyle='#b98770'; ctx.strokeStyle='rgba(251,146,60,.16)';
+  for(let i=0;i<=4;i++){ const v=min+(max-min)*i/4; const x=xTo(v), y=yTo(v); ctx.beginPath();ctx.moveTo(x,pad.t);ctx.lineTo(x,pad.t+ph);ctx.stroke();ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(pad.l+pw,y);ctx.stroke(); ctx.fillText(`${Math.round(v)}`,x-9,h-10); ctx.fillText(`${Math.round(v)}`,3,y+3); }
+  ctx.save(); ctx.setLineDash([5,5]); ctx.strokeStyle='rgba(255,237,213,.35)'; ctx.beginPath();ctx.moveTo(xTo(min),yTo(min));ctx.lineTo(xTo(max),yTo(max));ctx.stroke();ctx.restore();
+  ctx.strokeStyle='#fb923c'; ctx.lineWidth=2.2; ctx.beginPath();
+  const n=160; for(let i=0;i<=n;i++){ const x=min+(max-min)*i/n, y=compressorStaticDb(x,cfg); const px=xTo(x),py=yTo(y); if(i===0)ctx.moveTo(px,py);else ctx.lineTo(px,py); } ctx.stroke();
+  if(cfg.enabled){ const tx=xTo(cfg.threshold); ctx.strokeStyle='rgba(253,186,116,.8)';ctx.setLineDash([3,3]);ctx.beginPath();ctx.moveTo(tx,pad.t);ctx.lineTo(tx,pad.t+ph);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle='#fdba74';ctx.fillText('T',tx+3,pad.t+11); }
+  ctx.fillStyle='#d9a58d';ctx.fillText('入力 dB',w-48,h-10);ctx.save();ctx.translate(10,pad.t+48);ctx.rotate(-Math.PI/2);ctx.fillText('出力 dB',0,0);ctx.restore();
+}
+function redrawVisualizations() {
+  if (!visualizationToggle.checked || visualizationPanel.classList.contains('hidden') || !currentVisualization?.windows?.length) return;
+  const original=currentVisualization.windows;
+  const g=sliderToGain(gainSlider.value), gainDbAdj=linToDb(g);
+  const afterGain=original.map(x=>x+gainDbAdj);
+  const cfg=currentCompressorConfig();
+  const afterComp=afterGain.map(x=>compressorStaticDb(x,cfg));
+  const bounds=niceDbBounds([original,afterGain,afterComp]);
+  drawHistogram(histOriginal,original,bounds,'#fdba74');
+  drawHistogram(histGain,afterGain,bounds,'#fb923c');
+  drawHistogram(histCompressed,afterComp,bounds,'#f97316');
+  drawTransfer(transferCurve,cfg,bounds);
+}
 function clearArtwork() { if (artworkUrl) URL.revokeObjectURL(artworkUrl); artworkUrl = null; artwork.hidden = true; artwork.removeAttribute('src'); artworkPlaceholder.hidden = false; }
 function showArtwork(blob) { clearArtwork(); if (!blob) return; artworkUrl = URL.createObjectURL(blob); artwork.src = artworkUrl; artwork.hidden = false; artworkPlaceholder.hidden = true; }
 function updateMediaSession(t) {
@@ -884,6 +1069,8 @@ async function selectTrack(t, autoplay = false, userInitiated = false) {
     const file = await ensureTrackFile(t);
     if (objectUrl) URL.revokeObjectURL(objectUrl);
     currentTrack = t;
+    currentVisualization = null;
+    if (visualizationToggle.checked) setVisualizationStatus('曲を読み込みました。可視化データを準備します…');
     let tag = { title:'', artist:'', album:'', artworkBlob:t.artworkBlob || null };
     if (!t.artworkScanned) {
       tag = await readId3(file, true);
@@ -901,6 +1088,7 @@ async function selectTrack(t, autoplay = false, userInitiated = false) {
     if (autoplay) { await resumeAudioContext(); applyAudioSettings(); await audio.play(); }
     // 再生開始を待たせず、自動解析は並行して走らせる。結果は既存スライダーへ滑らかに反映。
     setTimeout(() => { if (currentTrack === t) startAutoAnalysis(t, file); }, 0);
+    if (visualizationToggle.checked) setTimeout(() => { if (currentTrack === t) ensureVisualizationData(t, file); }, 120);
   } catch (err) { console.error(err); if (err?.name !== 'NotAllowedError') alert('このMP3を開けませんでした。'); }
 }
 function playbackList() { return sortedTracks.length ? sortedTracks : sortTrackArray(tracks); }
@@ -1036,13 +1224,16 @@ syncAutoPrefsUi();
   }
 }));
 
-folderStatus.addEventListener('click', () => {
-  if (viewMode !== 'folder' || !viewPath.length) return;
-  viewPath = viewPath.slice(0, -1);
-  renderLibrary();
-});
 sortSelect.addEventListener('change', renderLibrary);
 viewTabs.forEach(btn => btn.addEventListener('click', () => { viewMode = btn.dataset.view; viewPath = []; viewTabs.forEach(x => x.classList.toggle('active', x === btn)); renderLibrary(); }));
+
+visualizationToggle.addEventListener('change', async () => {
+  visualizationPanel.classList.toggle('hidden', !visualizationToggle.checked);
+  if (!visualizationToggle.checked) { visualizationRunId++; currentVisualization = null; setVisualizationStatus(''); return; }
+  if (!currentTrack) { setVisualizationStatus('曲を選択すると音量分布を表示します。'); requestAnimationFrame(redrawVisualizations); return; }
+  await ensureVisualizationData(currentTrack).catch(console.warn);
+});
+window.addEventListener('resize', () => { if (visualizationToggle.checked) requestAnimationFrame(redrawVisualizations); });
 
 playPause.addEventListener('click', async () => { if (!audio.src) return; if (audio.paused) { try { await resumeAudioContext(); applyAudioSettings(); await audio.play(); } catch (err) { console.error(err); alert('再生を開始できませんでした。'); } } else audio.pause(); });
 prevTrack.addEventListener('click', () => adjacentTrack(-1, true)); nextTrack.addEventListener('click', () => adjacentTrack(1, true));
@@ -1050,8 +1241,8 @@ back10.addEventListener('click', () => { audio.currentTime = Math.max(0, audio.c
 forward10.addEventListener('click', () => { audio.currentTime = Math.min(audio.duration || Infinity, audio.currentTime + 10); });
 seek.addEventListener('input', () => { if (Number.isFinite(audio.duration) && audio.duration > 0) audio.currentTime = Number(seek.value) / 1000 * audio.duration; });
 loopModeInputs.forEach(input => input.addEventListener('change', () => { if (!input.checked) return; setLoopMode(input.value); saveTrackSettings(); closeMenus(); }));
-[gainSlider, threshold, ratio, knee, attack, release, makeup].forEach(el => el.addEventListener('input', () => { if (!audioContext && audio.src) { try { ensureAudioGraph(); } catch (_) {} } applyAudioSettings(); saveTrackSettings(); }));
-compressorToggle.addEventListener('change', () => { if (!audioContext && audio.src) { try { ensureAudioGraph(); } catch (_) {} } applyAudioSettings(); saveTrackSettings(); });
+[gainSlider, threshold, ratio, knee, attack, release, makeup].forEach(el => el.addEventListener('input', () => { if (!audioContext && audio.src) { try { ensureAudioGraph(); } catch (_) {} } applyAudioSettings(); saveTrackSettings(); if (visualizationToggle.checked) requestAnimationFrame(redrawVisualizations); }));
+compressorToggle.addEventListener('change', () => { if (!audioContext && audio.src) { try { ensureAudioGraph(); } catch (_) {} } applyAudioSettings(); saveTrackSettings(); if (visualizationToggle.checked) requestAnimationFrame(redrawVisualizations); });
 
 audio.addEventListener('play', () => { playPause.textContent = '❚❚'; if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing'; });
 audio.addEventListener('pause', () => { playPause.textContent = '▶'; if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'; });
@@ -1089,6 +1280,6 @@ async function restoreDirectoryAndCache() {
   } catch (err) { console.warn(err); permissionBox.classList.remove('hidden'); }
 }
 
-window.addEventListener('beforeunload', () => { metadataRunId++; analysisRunId++; if (objectUrl) URL.revokeObjectURL(objectUrl); clearArtwork(); });
+window.addEventListener('beforeunload', () => { metadataRunId++; analysisRunId++; visualizationRunId++; if (objectUrl) URL.revokeObjectURL(objectUrl); clearArtwork(); });
 prevTrack.disabled = true; nextTrack.disabled = true; setLoopMode('one'); setDrawerExpanded(false); setMediaActionHandlers(); applyAudioSettings(); renderLibrary(); restoreDirectoryAndCache();
 if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('./service-worker.js').catch(console.error));
