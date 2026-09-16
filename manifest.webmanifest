@@ -20,11 +20,6 @@
       "type": "image/png",
       "purpose": "maskable"
     },
-    {
-      "src": "./icons/icon-512_appli.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "maskable"
-    }
+
   ]
 }
