@@ -564,7 +564,7 @@ function saveTrackSettings(file = null) {
   if (!currentTrack) return;
   const payload = {
     gain:sliderToGain(gainSlider.value), loopMode:currentLoopMode(),
-    compressor:{ enabled:compressorToggle.checked, threshold:Number(threshold.value), ratio:Number(ratio.value), knee:Number(knee.value), attack:Number(attack.value), release:Number(release.value), makeup:Number(makeup.value) }
+    compressor:{ enabled:compressorToggle.checked, threshold:Number(threshold.value), ratio:ratioSliderToRatio(ratio.value), knee:Number(knee.value), attack:Number(attack.value), release:Number(release.value), makeup:Number(makeup.value) }
   };
   localStorage.setItem(storageKey(trackKeyFor(currentTrack, file)), JSON.stringify(payload));
 }
@@ -572,7 +572,7 @@ function loadTrackSettings(file = null) {
   const s = getSettings(file);
   gainSlider.value = gainToSlider(s.gain); setLoopMode(s.loopMode);
   compressorToggle.checked = Boolean(s.compressor.enabled);
-  threshold.value = s.compressor.threshold; ratio.value = s.compressor.ratio; knee.value = s.compressor.knee;
+  threshold.value = s.compressor.threshold; ratio.value = ratioToSlider(s.compressor.ratio); knee.value = s.compressor.knee;
   attack.value = s.compressor.attack; release.value = s.compressor.release; makeup.value = s.compressor.makeup;
   applyAudioSettings();
 }
@@ -595,7 +595,7 @@ async function resumeAudioContext() { ensureAudioGraph(); if (audioContext.state
 function updateAudioSettingLabels() {
   const g = sliderToGain(gainSlider.value);
   gainValue.value = `${g.toFixed(2)}×`; gainDb.textContent = `${(20 * Math.log10(g)).toFixed(2)} dB`;
-  thresholdValue.value = `${Number(threshold.value).toFixed(0)} dB`; ratioValue.value = `${Number(ratio.value).toFixed(1)} : 1`; kneeValue.value = `${Number(knee.value).toFixed(0)} dB`;
+  thresholdValue.value = `${Number(threshold.value).toFixed(0)} dB`; ratioValue.value = `${ratioSliderToRatio(ratio.value).toFixed(2).replace(/\.00$/,'').replace(/(\.\d)0$/,'$1')} : 1`; kneeValue.value = `${Number(knee.value).toFixed(0)} dB`;
   attackValue.value = `${Math.round(Number(attack.value) * 1000)} ms`; releaseValue.value = `${Math.round(Number(release.value) * 1000)} ms`; makeupValue.value = `${Number(makeup.value).toFixed(1)} dB`;
   compressorControls.classList.toggle('disabled-panel', !compressorToggle.checked);
 }
@@ -616,7 +616,7 @@ function applyAudioSettings(rampSeconds = 0) {
   if (compressorNode) {
     rebuildAudioGraph();
     rampParam(compressorNode.threshold, Number(threshold.value), rampSeconds);
-    rampParam(compressorNode.ratio, Number(ratio.value), rampSeconds);
+    rampParam(compressorNode.ratio, ratioSliderToRatio(ratio.value), rampSeconds);
     rampParam(compressorNode.knee, Number(knee.value), rampSeconds);
     rampParam(compressorNode.attack, Number(attack.value), rampSeconds);
     rampParam(compressorNode.release, Number(release.value), rampSeconds);
@@ -626,6 +626,14 @@ function applyAudioSettings(rampSeconds = 0) {
 
 
 function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, Number(v))); }
+function ratioSliderToRatio(v) {
+  // スライダー位置0,1,2,3,4を実倍率1,2,4,8,16へ対応させる。
+  return Math.pow(2, clamp(v, 0, 4));
+}
+function ratioToSlider(r) {
+  const safe = clamp(r, 1, 16);
+  return Math.log2(safe);
+}
 function linToDb(v) { return v > 0 ? 20 * Math.log10(v) : -Infinity; }
 function percentile(sorted, q) {
   if (!sorted.length) return -Infinity;
@@ -649,7 +657,7 @@ function readAutoPrefsFromUi() {
     rmsTarget:clamp(autoRmsTarget.value, -36, -10),
     peakTarget:clamp(autoPeakTarget.value, -12, -0.5),
     compressor:autoCompressorEnabled.checked,
-    dynamicRange:clamp(autoDynamicRangeTarget.value, 6, 30)
+    dynamicRange:clamp(autoDynamicRangeTarget.value, 1, 30)
   };
 }
 function syncAutoPrefsUi(prefs = getAutoPrefs()) {
@@ -659,7 +667,13 @@ function syncAutoPrefsUi(prefs = getAutoPrefs()) {
   autoCompressorEnabled.checked = Boolean(prefs.compressor);
   autoDynamicRangeTarget.value = prefs.dynamicRange;
 }
-function saveAutoPrefs() { localStorage.setItem(AUTO_PREFS_KEY, JSON.stringify(readAutoPrefsFromUi())); }
+function saveAutoPrefs() {
+  const prefs = readAutoPrefsFromUi();
+  localStorage.setItem(AUTO_PREFS_KEY, JSON.stringify(prefs));
+  // 入力欄と内部保存値が食い違わないよう、クランプ後の正規化値をUIへ戻す。
+  syncAutoPrefsUi(prefs);
+  return prefs;
+}
 function analysisCacheKey(t, file) { return `${ANALYSIS_PREFIX}${trackKeyFor(t, file)}`; }
 function getCachedAnalysis(t, file) {
   try { const x = JSON.parse(localStorage.getItem(analysisCacheKey(t,file)) || 'null'); return x?.version === 1 ? x : null; }
@@ -758,7 +772,7 @@ function suggestAutoParams(stats, prefs) {
   const gainDbAdj = linToDb(gain);
 
   const c = {
-    enabled:compressorToggle.checked, threshold:Number(threshold.value), ratio:Number(ratio.value), knee:Number(knee.value),
+    enabled:compressorToggle.checked, threshold:Number(threshold.value), ratio:ratioSliderToRatio(ratio.value), knee:Number(knee.value),
     attack:Number(attack.value), release:Number(release.value), makeup:Number(makeup.value)
   };
 
@@ -778,7 +792,7 @@ function suggestAutoParams(stats, prefs) {
     // よって P30→P90 の最終幅を targetSpan にするには R=(P90-P30)/targetSpan。
     // 既に目標幅以下なら圧縮しない(R=1)。
     const requiredRatio = sourceSpan > targetSpan ? sourceSpan / targetSpan : 1;
-    c.ratio = clamp(requiredRatio, 1, 20);
+    c.ratio = clamp(requiredRatio, 1, 16);
 
     // P30を圧縮開始点として数式通りに扱いやすくするためkneeは0（Hard knee）。
     c.knee = 0;
@@ -793,7 +807,7 @@ function suggestAutoParams(stats, prefs) {
       : c.threshold + (p50 - c.threshold) / c.ratio;
     c.makeup = clamp(p50 - compressedP50, 0, 20);
 
-    // 表示用の推定値（ratio上限20に当たると目標幅へ完全には届かないことがある）。
+    // 表示用の推定値（ratio上限16に当たると目標幅へ完全には届かないことがある）。
     c._sourceSpan = sourceSpan;
     c._targetSpan = targetSpan;
     c._estimatedSpan = c.ratio > 0 ? sourceSpan / c.ratio : sourceSpan;
@@ -807,7 +821,7 @@ function animateUiControls(target, ms = 1500) {
     gain:Number(gainSlider.value), threshold:Number(threshold.value), ratio:Number(ratio.value), knee:Number(knee.value), attack:Number(attack.value), release:Number(release.value), makeup:Number(makeup.value)
   };
   const to = {
-    gain:gainToSlider(target.gain), threshold:target.compressor.threshold, ratio:target.compressor.ratio, knee:target.compressor.knee,
+    gain:gainToSlider(target.gain), threshold:target.compressor.threshold, ratio:ratioToSlider(target.compressor.ratio), knee:target.compressor.knee,
     attack:target.compressor.attack, release:target.compressor.release, makeup:target.compressor.makeup
   };
   compressorToggle.checked = Boolean(target.compressor.enabled);
@@ -874,7 +888,7 @@ function setVisualizationStatus(text = '', kind = '') {
 function currentCompressorConfig() {
   return {
     enabled:compressorToggle.checked,
-    threshold:Number(threshold.value), ratio:Number(ratio.value), knee:Number(knee.value),
+    threshold:Number(threshold.value), ratio:ratioSliderToRatio(ratio.value), knee:Number(knee.value),
     attack:Number(attack.value), release:Number(release.value), makeup:Number(makeup.value)
   };
 }
@@ -987,17 +1001,49 @@ function histogram(values, min, max, bins=28) {
   for (const v of values) { if (!Number.isFinite(v)) continue; const i=Math.max(0,Math.min(bins-1,Math.floor((v-min)/span*bins))); counts[i]++; }
   const total = Math.max(1, values.length); return counts.map(c => c/total*100);
 }
+function histogramTickStep(bounds) {
+  const span = Math.max(1, bounds.max - bounds.min);
+  return span <= 30 ? 5 : 10;
+}
+function histogramPercentiles(values) {
+  const sorted = values.filter(Number.isFinite).sort((a,b)=>a-b);
+  return { p30:percentile(sorted,.30), p50:percentile(sorted,.50), p90:percentile(sorted,.90) };
+}
 function drawHistogram(canvas, values, bounds, accent='#fb923c') {
-  const {ctx,w,h}=canvasSetup(canvas); const pad={l:38,r:10,t:12,b:28}; const pw=w-pad.l-pad.r, ph=h-pad.t-pad.b;
+  const {ctx,w,h}=canvasSetup(canvas);
+  const pad={l:38,r:12,t:18,b:30};
+  const pw=w-pad.l-pad.r, ph=h-pad.t-pad.b;
   ctx.clearRect(0,0,w,h); ctx.fillStyle='#160906'; ctx.fillRect(0,0,w,h);
-  const hist=histogram(values,bounds.min,bounds.max,28); const ymax=Math.max(5,Math.ceil(Math.max(...hist,1)/5)*5);
+  const hist=histogram(values,bounds.min,bounds.max,28);
+  const ymax=Math.max(5,Math.ceil(Math.max(...hist,1)/5)*5);
+  const xTo=v=>pad.l+(v-bounds.min)/(bounds.max-bounds.min)*pw;
   ctx.strokeStyle='rgba(251,146,60,.16)'; ctx.fillStyle='#b98770'; ctx.font='10px system-ui'; ctx.lineWidth=1;
-  for(let i=0;i<=4;i++){ const y=pad.t+ph*i/4; ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(w-pad.r,y);ctx.stroke(); const val=(ymax*(1-i/4)).toFixed(0)+'%';ctx.fillText(val,2,y+3); }
-  for(let i=0;i<=4;i++){ const x=pad.l+pw*i/4; const db=bounds.min+(bounds.max-bounds.min)*i/4; ctx.fillText(`${Math.round(db)}`,x-10,h-8); }
-  const bw=pw/hist.length;
-  ctx.fillStyle=accent;
+  for(let i=0;i<=4;i++){
+    const y=pad.t+ph*i/4;
+    ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(w-pad.r,y);ctx.stroke();
+    ctx.fillText((ymax*(1-i/4)).toFixed(0)+'%',2,y+3);
+  }
+  const step=histogramTickStep(bounds);
+  const firstTick=Math.ceil(bounds.min/step)*step;
+  ctx.strokeStyle='rgba(251,146,60,.10)';
+  for(let db=firstTick;db<=bounds.max+1e-9;db+=step){
+    const x=xTo(db);
+    ctx.beginPath();ctx.moveTo(x,pad.t);ctx.lineTo(x,pad.t+ph);ctx.stroke();
+    ctx.fillStyle='#b98770';ctx.fillText(`${Math.round(db)}`,x-10,h-8);
+  }
+  const bw=pw/hist.length; ctx.fillStyle=accent;
   hist.forEach((v,i)=>{ const bh=ph*v/ymax; ctx.fillRect(pad.l+i*bw+1,pad.t+ph-bh,Math.max(1,bw-2),bh); });
-  ctx.fillStyle='#d9a58d'; ctx.fillText('dBFS',w-34,h-8);
+  const ps=histogramPercentiles(values);
+  const markers=[['P30',ps.p30,'#fbbf24',[3,3]],['P50',ps.p50,'#fde68a',[]],['P90',ps.p90,'#fb7185',[5,3]]];
+  markers.forEach(([label,val,color,dash],idx)=>{
+    if(!Number.isFinite(val)) return;
+    const x=xTo(val); ctx.save(); ctx.strokeStyle=color; ctx.lineWidth=1.4; ctx.setLineDash(dash);
+    ctx.beginPath();ctx.moveTo(x,pad.t);ctx.lineTo(x,pad.t+ph);ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle=color;ctx.font='9px system-ui';
+    const y=pad.t+10+idx*11;
+    ctx.fillText(`${label} ${val.toFixed(1)}`,Math.min(w-pad.r-54,Math.max(pad.l+2,x+3)),y); ctx.restore();
+  });
+  ctx.fillStyle='#d9a58d';ctx.fillText('dBFS',w-34,h-8);
 }
 function drawTransfer(canvas, cfg, bounds) {
   const {ctx,w,h}=canvasSetup(canvas); const pad={l:42,r:12,t:14,b:32}; const pw=w-pad.l-pad.r, ph=h-pad.t-pad.b;

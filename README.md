@@ -40,3 +40,11 @@ MP3を外部へアップロードする処理はありません。自動音響�
 - Static compressor input/output transfer curve (Attack/Release excluded because they are time-domain behavior).
 - Interactive location breadcrumbs in the compact header for folder / artist / album navigation.
 - Larger menu button spanning the title/location rows.
+
+
+## v11 changes
+- P30–P90 target range can now be set down to 1 dB.
+- Auto-audio preference values are normalized back into the UI after saving, so the visible value and internal value stay synchronized.
+- Compressor ratio slider uses a logarithmic scale: 1, 2, 4, 8, 16 are equally spaced; automatic ratio is capped at 16:1.
+- Volume histograms display P30 / P50 / P90 marker lines.
+- Histogram dBFS X-axis ticks use 10 dB spacing for wider ranges and 5 dB spacing for narrower ranges.

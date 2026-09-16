@@ -258,3 +258,18 @@ h1 { font-size:clamp(8px,2.35vw,10px); line-height:1; font-weight:760; letter-sp
   .location-crumb { font-size:10.5px; max-width:39vw; }
   .top-zone > .title-row .menu-button { width:40px; height:50px; }
 }
+
+.ratio-scale {
+  display:grid;
+  grid-template-columns:repeat(5,1fr);
+  gap:0;
+  margin-top:2px;
+  padding:0 2px;
+  font-size:9px;
+  line-height:1;
+  color:#a8755f;
+  user-select:none;
+}
+.ratio-scale span { text-align:center; }
+.ratio-scale span:first-child { text-align:left; }
+.ratio-scale span:last-child { text-align:right; }
