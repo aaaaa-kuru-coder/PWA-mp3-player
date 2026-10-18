@@ -654,7 +654,7 @@ function getAutoPrefs() {
 function readAutoPrefsFromUi() {
   return {
     gainMode:autoGainMode.value,
-    rmsTarget:clamp(autoRmsTarget.value, -36, -10),
+    rmsTarget:clamp(autoRmsTarget.value, -60, -10),
     peakTarget:clamp(autoPeakTarget.value, -12, -0.5),
     compressor:autoCompressorEnabled.checked,
     dynamicRange:clamp(autoDynamicRangeTarget.value, 1, 30)
