@@ -79,7 +79,7 @@ const histGain = $('histGain');
 const histCompressed = $('histCompressed');
 const transferCurve = $('transferCurve');
 
-const GAIN_MIN = 0.05;
+const GAIN_MIN = 0.01;
 const GAIN_MAX = 1.8;
 const ACTIVE_WINDOW_FLOOR_DB = -60;
 const DB_NAME = 'local-mp3-player-db-v2';
